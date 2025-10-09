@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+src/moDiNA/__init__.py
+src/moDiNA/example.py
+src/moDiNA.egg-info/PKG-INFO
+src/moDiNA.egg-info/SOURCES.txt
+src/moDiNA.egg-info/dependency_links.txt
+src/moDiNA.egg-info/top_level.txt

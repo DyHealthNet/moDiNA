@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moDiNA"
+version = "0.0.1"
+authors = [
+  { name="Andrea Raithel", email="andrea.raithel@tum.de" },
+]
+description = "Multi-Omics Differential Network Analysis"
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+Homepage = "https://github.com/DyHealthNet/moDiNA.git"
+Issues = "https://github.com/DyHealthNet/moDiNA/issues"

@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: moDiNA
+Version: 0.0.1
+Summary: Multi-Omics Differential Network Analysis
+Author-email: Andrea Raithel <andrea.raithel@tum.de>
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/DyHealthNet/moDiNA.git
+Project-URL: Issues, https://github.com/DyHealthNet/moDiNA/issues
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+
+# moDiNA
+Multi-Omics Differential Network Analysis 
