@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import napy as nanpy
 import warnings
+import logging
 
 EXCLUDED_EFFECTS = {'chi2', 't', 'F', 'U', 'H'}
 
@@ -170,11 +171,9 @@ def nanpy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.Data
     cat_phenotypes_one, cat_cols_one = df_to_numpy(cat_phenotypes_one)
     
     if cat_phenotypes_one.shape[1] > 0:
-        warnings.warn(
+        logging.warning(
             f'There were categorical variables found with only one category: {cat_cols_one}. '
-            'These will be added as dummy rows with p-value 1.0 and effect size 0.0.',
-            UserWarning
-        )
+            'These will be added as dummy rows with p-value 1.0 and effect size 0.0.')
 
         # For each combination of cat_cols_one and cont_cols, add a row with p-value 1.0 and effect size 0.0
         for i, df in enumerate(results):
@@ -292,13 +291,17 @@ def calculate_association_scores(cat_data, cont_data, tests) -> pd.DataFrame:
     # Continuous-Categorical association testing
     # TODO: enable cat_cont testing
     #cat_cont_more = nanpy_cat_cont(cont_data, cat_data, tests.get('catContM'))
+    #logging.info("Finished continuous-categorical score creation")
     cat_cont_more = pd.DataFrame()
 
     cat_cont_two = nanpy_binary_cat_cont(cont_data, cat_data, tests.get('catContB'))
-
+    logging.info("Finished continuous-binary score creation")
+    
     cat_cat_results = nanpy_cat_cat(cat_data)
-
+    logging.info("Finished categorical-categorical score creation")
+    
     cont_cont_results = nanpy_cont_cont(cont_data, tests.get('contCont'))
+    logging.info("Finished continuous-continuous score creation")
 
     scores = combine_tests(cat_cat_results, cont_cont_results, cat_cont_two, cat_cont_more)
     
