@@ -75,7 +75,7 @@ class DiffNet:
         self._edges_diff = self._compute_diff_edges()
 
         # Nodes
-        self._nodes_diff = self._compute_diff_nodes()
+        self._nodes_diff = self._compute_diff_nodes(context1=context1_filtered, context2=context2_filtered)
 
         return self._edges_diff, self._nodes_diff 
 
@@ -262,6 +262,9 @@ class DiffNet:
 
         if self._edge_metric is None:
             logging.warning('No edge_metric was specified. This setting will only work for the direct ranking algorithm.')
+            # Take adj-P per default
+            self._edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
+                                              metrics=['adj-P'], included_cols=('test_type',))
 
         # Pre-rescaled effect size (pre-E) or rescaled multiple-testing adjusted p-value (adj-P)
         if self._edge_metric == 'adj-P' or self._edge_metric == 'pre-E':
@@ -294,12 +297,12 @@ class DiffNet:
         # Integrated Interaction Score (int-IS)
         elif self._edge_metric == 'int-IS':
             # Compute interaction score using DrDimont method
-            self._scores1_processed = interaction_score_drdimont(self._scores1_processed,
-                                                                 metric='pre-E',
-                                                                 max_path_length=self._max_path_length)
-            self._scores2_processed = interaction_score_drdimont(self._scores2_processed,
-                                                                 metric='pre-E',
-                                                                 max_path_length=self._max_path_length)
+            self._scores1_processed = calculate_interaction_score(self._scores1_processed,
+                                                                  metric='pre-E',
+                                                                  max_path_length=self._max_path_length)
+            self._scores2_processed = calculate_interaction_score(self._scores2_processed,
+                                                                  metric='pre-E',
+                                                                  max_path_length=self._max_path_length)
         
         # Log-transformed p-value and pre-rescaled effect size combined score
         elif self._edge_metric == 'log-CS':
@@ -326,17 +329,78 @@ class DiffNet:
             self._scores2_processed[self._edge_metric] = values2
 
         else:
-            raise ValueError(f"Invalid edge metric '{self._edge_metric}'. Choose from: 'adj-P', 'pre-E', 'post-E', 'int-IS', 'pre-CS', 'post-CS', 'log-CS'.")
+            raise ValueError(f"Invalid edge metric '{self._edge_metric}'. Choose from: 'adj-P', 'pre-E', 'post-E', 'int-IS', 'pre-CS', 'post-CS' or 'log-CS'.")
 
         if self._edges_diff is None:
             # Compute difference in edge scores
             self._edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
-                                             metrics=[self._edge_metric], included_cols=('test_type',))
+                                              metrics=[self._edge_metric], included_cols=('test_type',))
         
         return self._edges_diff
     
 
-    def _compute_diff_nodes(self):
+    def _compute_diff_nodes(self, context1, context2):
+        assert self._scores1_processed is not None and self._scores2_processed is not None, 'Filtering was unsuccessful.'
+        assert context1.columns.equals(context2.columns), 'Context a and b need to have the same structure.'
+        assert 'adj-P' in self._scores1_processed.columns and 'adj-P' in self._scores2_processed.columns, 'Min-Max rescaling for raw-P was unsuccessful.'
+        assert 'pre-E' in self._scores1_processed.columns and 'pre-E' in self._scores2_processed.columns, 'Min-Max rescaling for pre-E was unsuccessful.'
+
+        if self._node_metric is None:
+            logging.warning('No node_metric was specified. This setting will only work for the PageRank and DimontRank algorithm.')
+            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+
+        # Statistical test centrality (STC)
+        if self._node_metric == 'STC':
+            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=True, test_type=self._stc_test, correction=self._correction)
+
+        # Degree centrality (DC)
+        elif self._node_metric == 'DC':
+            if self._filter_metric is None:
+                # Take 'adj-P' per default
+                dc_metric = 'adj-P'
+            else:
+                dc_metric = self._filter_metric
+            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+            self._nodes_diff = calculate_degree_centrality(nodes_diff=self._nodes_diff, metric=dc_metric, weighted=False,
+                                                           scores1=self._scores1_processed, scores2=self._scores2_processed)
+            
+        # Degree centrality and statistical test centrality combined (DC-STC)
+        elif self._node_metric == 'DC-STC':
+            if self._filter_metric is None:
+                # Take 'adj-P' per default
+                dc_metric = 'adj-P'
+            else:
+                dc_metric = self._filter_metric
+            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=True, test_type=self._stc_test, correction=self._correction)
+            self._nodes_diff = calculate_degree_centrality(nodes_diff=self._nodes_diff, metric=dc_metric, weighted=False,
+                                                           scores1=self._scores1_processed, scores2=self._scores2_processed)
+            
+            self._nodes_diff['DC-STC'] = self._nodes_diff['DC'] - self._nodes_diff['STC'] + 1.0        
+        
+        # Weighted degree centrality based on adj-P (WDC-P)
+        elif self._node_metric == 'WDC-P':
+            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+            self._nodes_diff = calculate_degree_centrality(nodes_diff=self._nodes_diff, metric='adj-P', weighted=True,
+                                                           scores1=self._scores1_processed, scores2=self._scores2_processed)
+
+        # Weighted degree centrality based on pre-E (WDC-E)
+        elif self._node_metric == 'WDC-E':
+            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+            self._nodes_diff = calculate_degree_centrality(nodes_diff=self._nodes_diff, metric='pre-E', weighted=True,
+                                                           scores1=self._scores1_processed, scores2=self._scores2_processed)
+
+        # PageRank centrality (PRC)
+        elif self._node_metric == 'PRC':
+            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+
+            # TODO: allow 'adj-P' metric for PRC (don't forget to invert)
+
+            self._nodes_diff = calculate_pagerank_centrality(nodes_diff=self._nodes_diff, metric='pre-E', invert=False,
+                                                             scores1=self._scores1_processed, scores2=self._scores2_processed)
+
+        else:
+            raise ValueError(f"Invalid node metric '{self._node_metric}'. Choose from: 'DC', 'STC', 'DC-STC', 'WDC-P', 'WDC-E' or 'PRC'.")
+
         return self._nodes_diff
 
 

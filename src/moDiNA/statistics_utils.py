@@ -2,15 +2,11 @@ import numpy as np
 import pandas as pd
 import scipy.stats as sc
 import networkx as nx
-import warnings
 from itertools import combinations
 from collections import Counter, defaultdict
-import ast
 import igraph as ig
-import os
 
 from score_calculation import *
-from visualization_utils import *
 
 
 # --- Statistical association tests and differential network computation ---
@@ -51,8 +47,8 @@ def compute_context_scores(data, pheno_meta_label, tests='all', correction='bh',
 
 # Compute absolute differences in edge scores between two contexts
 def subtract_edges(scores1, scores2, metrics, included_cols=None):
-    assert scores1['label1'].equals(scores2['label1']), 'Context a and b need to have the same structure.'
-    assert scores1['label2'].equals(scores2['label2']), 'Context a and b need to have the same structure.'
+    if not scores1['label1'].equals(scores2['label1']) or not scores1['label2'].equals(scores2['label2']):
+        raise ValueError('Context a and b need to have the same structure.')
 
     edges_diff = scores1[['label1', 'label2']].copy()
     
@@ -70,7 +66,9 @@ def subtract_edges(scores1, scores2, metrics, included_cols=None):
 
 # Compute absolute mean difference and statistical significance for each node between two contexts
 def subtract_nodes(context1, context2, test=True, test_type='parametric', correction='bh'):
-    assert context1.columns.equals(context2.columns), 'Context a and b need to have the same structure.'
+    if not context1.columns.equals(context2.columns):
+        raise ValueError('Context a and b need to have the same structure.')
+    
     nodes = context1.columns
 
     # Absolute mean difference
@@ -86,16 +84,16 @@ def subtract_nodes(context1, context2, test=True, test_type='parametric', correc
                 result = sc.mannwhitneyu(context1[node], context2[node], nan_policy='omit')
             
             nodes_diff.loc[node, 'test_p'] = result.pvalue
-            nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
-
+        
+        nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
         nodes_diff['STC'] = sc.false_discovery_control(nodes_diff['test_p'], method=correction)
 
     return nodes_diff
 
 
 # --- Node and edge metrics ---
-# Compute differential (weighted) degree centralities
-def diff_degree_centrality(nodes_diff, scores1, scores2, metric='adj-P', node1='label1', node2='label2', weighted=False):
+# Calculate differential (weighted) degree centralities
+def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='adj-P', weighted=False):
     if weighted:
         if metric == 'adj-P':
             scores1['adj-P_inverted'] = 1 - scores1[metric]
@@ -124,11 +122,11 @@ def diff_degree_centrality(nodes_diff, scores1, scores2, metric='adj-P', node1='
             sum1 = 0
             sum2 = 0
             for i in scores1.index:
-                if (scores1.loc[i, node1] == node) or (scores1.loc[i, node2] == node):
+                if (scores1.loc[i, 'label1'] == node) or (scores1.loc[i, 'label2'] == node):
                     sum1 += scores1.loc[i, metric]
 
             for i in scores2.index:
-                if (scores2.loc[i, node1] == node) or (scores2.loc[i, node2] == node):
+                if (scores2.loc[i, 'label1'] == node) or (scores2.loc[i, 'label2'] == node):
                     sum2 += scores2.loc[i, metric]
 
             degree_centrality.loc[node, 'context_a'] = sum1
@@ -140,12 +138,14 @@ def diff_degree_centrality(nodes_diff, scores1, scores2, metric='adj-P', node1='
             count2 = 0
 
             for i in scores1.index:
-                if (scores1.loc[i, node1] == node) or (scores1.loc[i, node2] == node):
-                    count1 += 1
+                if (scores1.loc[i, 'label1'] == node) or (scores1.loc[i, 'label2'] == node):
+                    if scores1.loc[i, metric] != 0: 
+                        count1 += 1
 
             for i in scores2.index:
-                if (scores2.loc[i, node1] == node) or (scores2.loc[i, node2] == node):
-                    count2 += 1
+                if (scores2.loc[i, 'label1'] == node) or (scores2.loc[i, 'label2'] == node):
+                    if scores2.loc[i, metric] != 0: 
+                        count2 += 1
 
             degree_centrality.loc[node, 'context_a'] = count1
             degree_centrality.loc[node, 'context_b'] = count2
@@ -162,30 +162,27 @@ def diff_degree_centrality(nodes_diff, scores1, scores2, metric='adj-P', node1='
     # (Absolute) difference
     method_signed = method + '_signed'
     nodes_diff[method_signed] = (degree_centrality['context_a'] / max1) - (degree_centrality['context_b'] / max2)
-    nodes_diff[method] = abs((degree_centrality['context_a'] / max1) -
-                                        (degree_centrality['context_b'] / max2))
+    nodes_diff[method] = abs((degree_centrality['context_a'] / max1) - (degree_centrality['context_b'] / max2))
 
-    return degree_centrality, nodes_diff
+    return nodes_diff
 
 
 # Compute differential PageRank centrality
-def pagerank_centrality(nodes_diff, scores1, scores2,
-                        edge_weight='pre-E', invert_weight=False,
-                        node1='label1', node2='label2'):
+def calculate_pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E', invert=False):
     scores1 = scores1.copy()
     scores2 = scores2.copy()
 
     # Inverse weights if specified (e.g. in the case of p-values) and set edge 'weight' column
-    if invert_weight is True:
-        scores1['weight'] = 1 - scores1[edge_weight]
-        scores2['weight'] = 1 - scores2[edge_weight]
-    elif edge_weight != 'weight':
-        scores1['weight'] = scores1[edge_weight]
-        scores2['weight'] = scores2[edge_weight]
+    if invert is True:
+        scores1['weight'] = 1 - scores1[metric]
+        scores2['weight'] = 1 - scores2[metric]
+    elif metric != 'weight':
+        scores1['weight'] = scores1[metric]
+        scores2['weight'] = scores2[metric]
 
     # Create network and apply pagerank algorithm
-    network1 = nx.from_pandas_edgelist(scores1, node1, node2, 'weight')
-    network2 = nx.from_pandas_edgelist(scores2, node1, node2, 'weight')
+    network1 = nx.from_pandas_edgelist(scores1, 'label1', 'label2', 'weight')
+    network2 = nx.from_pandas_edgelist(scores2, 'label1', 'label2', 'weight')
     ranking1 = nx.pagerank(network1)
     ranking2 = nx.pagerank(network2)
 
@@ -207,7 +204,8 @@ def min_max_rescaling(scores1, scores2=None, metric='pre-E'):
         scores2 = scores2.copy()
 
     if metric in ['pre-E', 'adj-P']:
-        assert scores2 is not None, "Scores2 must be provided to rescale raw-E or raw-P."
+        if scores1 is None or scores2 is None:
+            raise ValueError('Scores 1 and 2 must be provided to rescale raw-E or raw-P.')
 
         # Get raw metrics
         if metric == 'pre-E':
@@ -273,7 +271,7 @@ def min_max_rescaling(scores1, scores2=None, metric='pre-E'):
 
 
 # Adjusted DrDimont implementation to compute integrated interaction scores
-def interaction_score_drdimont(data, max_path_length=3, metric='pre-E'):
+def calculate_interaction_score(data, max_path_length=3, metric='pre-E'):
     if max_path_length >= 5:
         raise ValueError('The maximum path length considered in interaction scores has to be smaller than 5.')
     data_extended = data.copy()
