@@ -42,6 +42,13 @@ class DiffNet:
         self._edges_diff = None
         self._nodes_diff = None
 
+        # Rankings
+        self._personalized_pagerank = None
+        self._pagerank = None
+        self._dimontrank = None
+        self._abs_dimontrank = None
+        self._direct_rank = None
+
         # Compute differential network
         self._compute_diff_network(context1=context1, context2=context2, pheno_meta=pheno_meta)
 
@@ -402,6 +409,139 @@ class DiffNet:
             raise ValueError(f"Invalid node metric '{self._node_metric}'. Choose from: 'DC', 'STC', 'DC-STC', 'WDC-P', 'WDC-E' or 'PRC'.")
 
         return self._nodes_diff
+    
+
+    def compute_nodes_ranking(self, ranking_algs):
+        assert self._nodes_diff is not None and self._edges_diff is not None, 'The differential network has not been computed yet.'
+        
+        for alg in ranking_algs:        
+            ranks = None
+
+            # Personalized PageRank
+            if alg == 'PageRank+':
+                if self._personalized_pagerank is not None:
+                    logging.info('PageRank+ was already applied. It can be accessed directly.')
+
+                if self._node_metric is None or self._edge_metric is None:
+                    raise ValueError('Personalized PageRank requires a node and edge metric'
+                                    'but the differential network was defined without one of them.')
+                
+                invert = True if self._node_metric == 'STC' else False
+                ranking_scores = pagerank(nodes_diff=self._nodes_diff, edges_diff=self._edges_diff,
+                                        node_metric=self._node_metric, edge_metric=self._edge_metric,
+                                        invert=invert, personalization=True)
+                ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
+                self._personalized_pagerank = ranks
+
+            # PageRank
+            elif alg == 'PageRank':
+                if self._pagerank is not None:
+                    logging.info('PageRank was already applied. It can be accessed directly.')
+
+                if self._edge_metric is None:
+                    raise ValueError('PageRank requires an edge metric'
+                                    'but the differential network was defined without one.')
+                ranking_scores = pagerank(edges_diff=self._edges_diff, edge_metric=self._edge_metric,
+                                        personalization=False)
+                ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
+                self._pagerank = ranks
+
+            # DimontRank with absolute difference
+            elif alg == 'absDimontRank':
+                if self._abs_dimontrank is not None:
+                    logging.info('absDimontRank was already applied. It can be accessed directly.')
+
+                if self._edge_metric is None:
+                    raise ValueError('absDimontRank requires an edge metric'
+                                    'but the differential network was defined without one.')
+                ranking_scores = dimontrank(edges_diff=self._edges_diff, edge_metric=self._edge_metric, mode='abs')
+                ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
+                self._abs_dimontrank = ranks
+
+            # DimontRank with signed difference
+            elif alg == 'DimontRank':
+                if self._dimontrank is not None:
+                    logging.info('DimontRank was already applied. It can be accessed directly.')
+
+                if self._edge_metric is None:
+                    raise ValueError('DimontRank requires an edge metric'
+                                    'but the differential network was defined without one.')
+                ranking_scores = dimontrank(edges_diff=self._edges_diff, edge_metric=self._edge_metric, mode='signed')
+                ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
+                self._dimontrank = ranks
+
+            # Direct ranking based on node metric
+            elif alg == 'direct':
+                if self._direct_rank is not None:
+                    logging.info('Direct rank was already applied. It can be accessed directly.')
+
+                if self._node_metric is None:
+                    raise ValueError('Direct ranking requires a node metric'
+                                    'but the differential network was defined without one.')
+                ranking_scores = self._nodes_diff[self._node_metric]
+
+                if self._node_metric == 'STC':
+                    ranks = pd.Series(ranking_scores).sort_values(ascending=True).index.tolist()
+                else:
+                    ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
+                self._direct_rank = ranks
+            
+            else:
+                raise ValueError(f"Invalid ranking algorithm {alg}."
+                                "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank' or 'direct'.")
+    
+
+    def save_ranking(self, ranking_algs, path=None):
+        for alg in ranking_algs:            
+            if path is not None:
+                file_path = os.path.join(path, f"ranking_{alg}.csv")
+            elif self.project_path is not None:
+                file_path = os.path.join(self.project_path, f"ranking_{alg}.csv")
+            else:
+                raise ValueError('Please provide a path where to save the rankings.')
+        
+            # Personalized PageRank
+            if alg == 'PageRank+':
+                if self._personalized_pagerank is None:
+                    raise ValueError('PageRank+ has not been applied yet.')
+                else:
+                    ranking_list = self._personalized_pagerank
+
+            # PageRank
+            if alg == 'PageRank':
+                if self._pagerank is None:
+                    raise ValueError('PageRank has not been applied yet.')
+                else:
+                    ranking_list = self._pagerank
+
+            # DimontRank with absolute difference
+            if alg == 'absDimontRank':
+                if self._abs_dimontrank is None:
+                    raise ValueError('absDimontRank has not been applied yet.')
+                else:
+                    ranking_list = self._abs_dimontrank
+
+            # DimontRank with signed difference
+            if alg == 'DimontRank':
+                if self._dimontrank is None:
+                    raise ValueError('DimontRank has not been applied yet.')
+                else:
+                    ranking_list = self._dimontrank
+
+            # Direct ranking based on node metric
+            if alg == 'direct':
+                if self._direct_rank is None:
+                    raise ValueError('Direct ranking has not been applied yet.')
+                else:
+                    ranking_list = self._direct_rank
+            
+            else:
+                raise ValueError(f"Invalid ranking algorithm {alg}."
+                                 "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank' or 'direct'.")
+
+            ranking_df = pd.DataFrame({"node": ranking_list, "rank": range(1, len(ranking_list) + 1)})
+            ranking_df = ranking_df.sort_values("node")
+            ranking_df.to_csv(file_path, index=False)
 
 
     # Save (processed) association scores
@@ -543,6 +683,31 @@ class DiffNet:
     def nodes_diff(self):
         assert self._nodes_diff is not None, 'Differential node scores have not been computed yet.'
         return self._nodes_diff.copy()
+    
+    @property
+    def personalized_pagerank(self):
+        assert self._personalized_pagerank is not None, 'Personalized PageRank has not been applied yet.'
+        return self._personalized_pagerank
+    
+    @property 
+    def pagerank(self):
+        assert self._pagerank is not None, 'PageRank has not been applied yet.'
+        return self._pagerank
+    
+    @property
+    def abs_dimontrank(self):
+        assert self._abs_dimontrank is not None, 'absDimontRank has not been applied yet.'
+        return self._abs_dimontrank
+    
+    @property
+    def dimontrank(self):
+        assert self._dimontrank is not None, 'DimontRank has not been applied yet.'
+        return self._dimontrank
+    
+    @property
+    def direct_rank(self):
+        assert self._direct_rank is not None, 'Direct rank has not been applied yet.'
+        return self._direct_rank
 
 
 

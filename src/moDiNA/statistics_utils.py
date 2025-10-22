@@ -321,53 +321,45 @@ def calculate_interaction_score(data, max_path_length=3, metric='pre-E'):
 
 # --- Ranking algorithms ---
 # PageRank algorithm
-def pagerank(edges_diff, edge_weight, nodes_diff=None, node_weight=None, invert_node=False, invert_edge=False,
-             node1='label1', node2='label2', personalization=True):
-    # Invert weights if specified (e.g. in the case of p-values) and set edge 'weight' column
+def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, invert=False, personalization=True):
+    edges_diff = edges_diff.copy()
+    edges_diff['weight'] = edges_diff[edge_metric]
+
+    # Create network
+    network = nx.from_pandas_edgelist(edges_diff, 'label1', 'label2', 'weight')
+
     if personalization:
-        assert nodes_diff is not None, "When personalization should be used, nodes_diff must be provided."
-        assert node_weight is not None, "When personalization should be used, node_weight must be provided."
+        # Add node metric
+        if nodes_diff is None or node_metric is None:
+            raise ValueError('When personalization should be used, nodes_diff and node_metric must be provided.')
         
-        if invert_node is True:
-            nodes_diff['weight'] = 1 - nodes_diff[node_weight]
+        nodes_diff = nodes_diff.copy()
+        if invert is True:
+            nodes_diff['weight'] = 1 - nodes_diff[node_metric]
         else:
-            nodes_diff['weight'] = nodes_diff[node_weight]
+            nodes_diff['weight'] = nodes_diff[node_metric]
 
-    if invert_edge is True:
-        edges_diff['weight'] = 1 - edges_diff[edge_weight]
-    elif edge_weight != 'weight':
-        edges_diff['weight'] = edges_diff[edge_weight]
-
-    # Create network and apply pagerank algorithm
-    network = nx.from_pandas_edgelist(edges_diff, node1, node2, 'weight')
-
-    if personalization:
-        # Add node weights
+        # Apply PageRank with personalization
         if (nodes_diff['weight'].nunique() == 1):
             ranking = nx.pagerank(network)
         else:
             personalization = nodes_diff['weight'].to_dict()
             ranking = nx.pagerank(network, personalization=personalization)
     else:
+        # Apply PageRank without personalization
         ranking = nx.pagerank(network)
 
     return ranking
 
 
 # DimontRank algorithm
-def dimontrank(edges_diff, edge_weight, invert_edge=False, node1='label1', node2='label2', mode='abs'):
-    # Invert weights if specified (e.g. in the case of p-values)
-    if invert_edge:
-        edge_weight_inverted = edge_weight + '_inverted'
-        edges_diff[edge_weight_inverted] = 1 - edges_diff[edge_weight]
-        edge_weight = edge_weight_inverted
-
+def dimontrank(edges_diff, edge_metric, mode='abs'):
     if mode == 'signed':
-        edge_weight = edge_weight + '_signed'
+        edge_metric = edge_metric + '_signed'
 
     sums = defaultdict(float)
     counts = defaultdict(int)
-    for n1, n2, w in zip(edges_diff[node1], edges_diff[node2], edges_diff[edge_weight]):
+    for n1, n2, w in zip(edges_diff['label1'], edges_diff['label2'], edges_diff[edge_metric]):
         sums[n1] += w
         sums[n2] += w
         counts[n1] += 1
