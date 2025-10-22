@@ -1,23 +1,33 @@
-[build-system]
-requires = ["setuptools >= 77.0.3"]
-build-backend = "setuptools.build_meta"
-
-[project]
+[tool.poetry]
 name = "moDiNA"
 version = "0.0.1"
-authors = [
-  { name="Andrea Raithel", email="andrea.raithel@tum.de" },
-]
 description = "Multi-Omics Differential Network Analysis"
+authors = ["Andrea Raithel <andrea.raithel@tum.de>"]
 readme = "README.md"
-requires-python = ">=3.11"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Operating System :: OS Independent",
-]
 license = "MIT"
-license-files = ["LICEN[CS]E*"]
+homepage = "https://github.com/DyHealthNet/moDiNA.git"
+repository = "https://github.com/DyHealthNet/moDiNA.git"
+documentation = "https://github.com/DyHealthNet/moDiNA/wiki"
+keywords = ["multi-omics", "network", "analysis"]
+packages = [
+    { include = "modina", from = "src" }
+]
 
-[project.urls]
+[tool.poetry.dependencies]
+python = ">=3.11"
+numpy = ">=1.26.4"
+pandas = ">=2.2.3"
+scipy = ">=1.11.0"
+pycop = ">=0.0.13"
+numba = ">=0.62.1"
+matplotlib = ">=3.10.7"
+networkx = ">=3.5"
+igraph = ">=0.11.9"
+
+[tool.poetry.urls]
 Homepage = "https://github.com/DyHealthNet/moDiNA.git"
 Issues = "https://github.com/DyHealthNet/moDiNA/issues"
+
+[build-system]
+requires = ["poetry-core>=1.5.0"]
+build-backend = "poetry.core.masonry.api"

@@ -3,19 +3,19 @@
 import numpy as np
 import pandas as pd
 import napy as nanpy
-import warnings
 import logging
 
 EXCLUDED_EFFECTS = {'chi2', 't', 'F', 'U', 'H'}
 
-def df_to_numpy(df: pd.DataFrame, nan_value=-89):
+
+def _df_to_numpy(df: pd.DataFrame, nan_value=-89):
     cols = df.columns
     df = df.fillna(nan_value)
     df_np = df.to_numpy(dtype=np.float64).copy()
     return df_np, cols
 
 
-def nanpy_formatting(assoc_out: dict[np.array], labels: list, test: str, file_name: str = None):
+def _nanpy_formatting(assoc_out: dict[np.array], labels: list, test: str, file_name: str = None):
     if not assoc_out:
         return None
 
@@ -49,7 +49,7 @@ def nanpy_formatting(assoc_out: dict[np.array], labels: list, test: str, file_na
     return df
 
 
-def combine_tests(cat_cat, cont_cont, cat_cont_b, cat_cont_m) -> pd.DataFrame:
+def _combine_tests(cat_cat, cont_cont, cat_cont_b, cat_cont_m) -> pd.DataFrame:
     """
     Combine the non-parametric tests with the parametric tests, giving the non-parametric tests the suffix '_np'.
     If no non-parametric results are given, empty columns 'pval_np', 'effsize_np', 'test_np' are created.
@@ -80,11 +80,11 @@ def combine_tests(cat_cat, cont_cont, cat_cont_b, cat_cont_m) -> pd.DataFrame:
 
 
 def nanpy_cat_cat(cat_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
-    cat_phenotypes, cols = df_to_numpy(cat_phenotypes)
+    cat_phenotypes, cols = _df_to_numpy(cat_phenotypes)
     if cat_phenotypes.shape[1] < 2:
         return [None]
     output = nanpy.chi_squared(cat_phenotypes, axis=1, threads=num_workers, nan_value=nan_value)
-    results = nanpy_formatting(output, [cols], 'chi2')
+    results = _nanpy_formatting(output, [cols], 'chi2')
 
     for col in results.columns:
         if "_e_" in col:
@@ -102,8 +102,8 @@ def nanpy_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, 
         return [None, None]
     cat_phenotypes_more = cat_phenotypes.loc[:, cat_phenotypes.nunique() > 2].copy()
 
-    cont_phenotypes, cont_cols = df_to_numpy(cont_phenotypes)
-    cat_phenotypes_more, cat_cols_more = df_to_numpy(cat_phenotypes_more)
+    cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
+    cat_phenotypes_more, cat_cols_more = _df_to_numpy(cat_phenotypes_more)
     # this is just to shut the IDE up
     more_cont_out_a, more_cont_out_k = None, None
     done_test_a, done_test_k = None, None
@@ -118,8 +118,8 @@ def nanpy_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, 
                                                threads=num_workers, nan_value=nan_value)
         done_test_k = "kruskal"
 
-    return [nanpy_formatting(more_cont_out_a, [cat_cols_more, cont_cols], done_test_a),
-            nanpy_formatting(more_cont_out_k, [cat_cols_more, cont_cols], done_test_k)]
+    return [_nanpy_formatting(more_cont_out_a, [cat_cols_more, cont_cols], done_test_a),
+            _nanpy_formatting(more_cont_out_k, [cat_cols_more, cont_cols], done_test_k)]
 
 
 def nanpy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
@@ -136,8 +136,8 @@ def nanpy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.Data
     if cat_phenotypes.shape[1] < 2:
         return [None, None, None, None]
     cat_phenotypes_two = cat_phenotypes.loc[:, cat_phenotypes.nunique() == 2].copy()
-    cont_phenotypes, cont_cols = df_to_numpy(cont_phenotypes)
-    cat_phenotypes_two, cat_cols_two = df_to_numpy(cat_phenotypes_two)
+    cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
+    cat_phenotypes_two, cat_cols_two = _df_to_numpy(cat_phenotypes_two)
 
     two_cont_out_t, two_cont_out_a, two_cont_out_m, two_cont_out_k = None, None, None, None
     done_test_t, done_test_a, done_test_m, done_test_k = None, None, None, None
@@ -161,14 +161,14 @@ def nanpy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.Data
                                               nan_value=nan_value)
         done_test_k = "kruskal"
 
-    results = [nanpy_formatting(two_cont_out_t, [cat_cols_two, cont_cols], done_test_t),
-               nanpy_formatting(two_cont_out_a, [cat_cols_two, cont_cols], done_test_a),
-               nanpy_formatting(two_cont_out_m, [cat_cols_two, cont_cols], done_test_m),
-               nanpy_formatting(two_cont_out_k, [cat_cols_two, cont_cols], done_test_k)]
+    results = [_nanpy_formatting(two_cont_out_t, [cat_cols_two, cont_cols], done_test_t),
+               _nanpy_formatting(two_cont_out_a, [cat_cols_two, cont_cols], done_test_a),
+               _nanpy_formatting(two_cont_out_m, [cat_cols_two, cont_cols], done_test_m),
+               _nanpy_formatting(two_cont_out_k, [cat_cols_two, cont_cols], done_test_k)]
     
     # Special case: variables with only one category
     cat_phenotypes_one = cat_phenotypes.loc[:, cat_phenotypes.nunique() <= 1].copy()
-    cat_phenotypes_one, cat_cols_one = df_to_numpy(cat_phenotypes_one)
+    cat_phenotypes_one, cat_cols_one = _df_to_numpy(cat_phenotypes_one)
     
     if cat_phenotypes_one.shape[1] > 0:
         logging.warning(
@@ -223,7 +223,7 @@ def nanpy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.Data
 def nanpy_cont_cont(cont_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
     if cont_phenotypes.shape[1] < 2:
         return [None, None]
-    cont_phenotypes, cont_cols = df_to_numpy(cont_phenotypes)
+    cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
     cont_out_p, cont_out_s = None, None
     test_p, test_s = None, None
 
@@ -236,11 +236,11 @@ def nanpy_cont_cont(cont_phenotypes: pd.DataFrame, test: str, num_workers=8, nan
         cont_out_s = nanpy.spearmanr(cont_phenotypes, threads=num_workers, nan_value=nan_value,
                                      axis=1)
         test_s = "spearman"
-    return [nanpy_formatting(cont_out_p, [cont_cols], test_p),
-            nanpy_formatting(cont_out_s, [cont_cols], test_s)]
+    return [_nanpy_formatting(cont_out_p, [cont_cols], test_p),
+            _nanpy_formatting(cont_out_s, [cont_cols], test_s)]
 
 
-def order_categories(data: pd.DataFrame):
+def _order_categories(data: pd.DataFrame):
     """
     Order categories in a dataframe such that they start at 0 and are consecutive integers.
     :param data: the dataframe to order
@@ -284,7 +284,7 @@ def calculate_association_scores(cat_data, cont_data, tests) -> pd.DataFrame:
     cont_data = cont_data.copy()
     cont_data = cont_data.select_dtypes(include=[np.number])
 
-    cat_data = order_categories(cat_data)
+    cat_data = _order_categories(cat_data)
 
     tests = {k: v.lower() for k, v in tests.items()}
 
@@ -303,6 +303,6 @@ def calculate_association_scores(cat_data, cont_data, tests) -> pd.DataFrame:
     cont_cont_results = nanpy_cont_cont(cont_data, tests.get('contCont'))
     logging.info("Finished continuous-continuous score creation")
 
-    scores = combine_tests(cat_cat_results, cont_cont_results, cat_cont_two, cat_cont_more)
+    scores = _combine_tests(cat_cat_results, cont_cont_results, cat_cont_two, cat_cont_more)
     
     return scores

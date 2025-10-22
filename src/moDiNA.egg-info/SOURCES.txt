@@ -1,8 +1,12 @@
 README.md
 pyproject.toml
-src/moDiNA/__init__.py
-src/moDiNA/example.py
 src/moDiNA.egg-info/PKG-INFO
 src/moDiNA.egg-info/SOURCES.txt
 src/moDiNA.egg-info/dependency_links.txt
+src/moDiNA.egg-info/requires.txt
 src/moDiNA.egg-info/top_level.txt
+src/modina/__init__.py
+src/modina/context_simulation.py
+src/modina/diffnet.py
+src/modina/score_calculation.py
+src/modina/statistics_utils.py

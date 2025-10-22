@@ -1,12 +1,14 @@
-from score_calculation import *
-from statistics_utils import *
 import os
 import logging
 import math
 
+from modina.score_calculation import *
+from modina.statistics_utils import *
+
+
 class DiffNet:
     def __init__(self, context1, context2, meta_file, edge_metric, node_metric,
-                 filter_method=None, filter_param=0, filter_metric=None, filter_rule=None,
+                 filter_method=None, filter_param=0.0, filter_metric=None, filter_rule=None,
                  stc_test='parametric', max_path_length=2,
                  cont_cont='spearman', cat_cat='chi2', cat_cont_b='mann-whitney u', cat_cont_m='kruskal-wallis', correction='bh',
                  nan_value=-89, num_workers=1,
@@ -54,10 +56,15 @@ class DiffNet:
 
     def _compute_diff_network(self, context1, context2, meta_file):
         # Compute context scores
-        self._scores1 = self._compute_context_scores(context_data=context1, meta_file=meta_file, target=1)
-        self._scores2 = self._compute_context_scores(context_data=context2, meta_file=meta_file, target=2)
+        self._scores1 = DiffNet.compute_context_scores(context_data=context1, meta_file=meta_file, 
+                                                       cont_cont=self._cont_cont, cat_cat=self._cat_cat,
+                                                       cat_cont_b=self._cat_cont_b, cat_cont_m=self._cat_cont_m)
+        self._scores2 = DiffNet.compute_context_scores(context_data=context2, meta_file=meta_file,
+                                                       cont_cont=self._cont_cont, cat_cat=self._cat_cat,
+                                                       cat_cont_b=self._cat_cont_b, cat_cont_m=self._cat_cont_m)
         assert self._scores1 is not None and self._scores2 is not None, 'Score calculation was unsuccessful.'
-        
+        logging.info('Association score calculation was successful for both contexts.')
+
         # Min-Max rescaling for raw-P and raw-E
         self._scores1, self._scores2 = min_max_rescaling(scores1=self._scores1,
                                                          scores2=self._scores2,
@@ -86,16 +93,20 @@ class DiffNet:
         return self._edges_diff, self._nodes_diff 
 
 
-    def _compute_context_scores(self, context_data, meta_file, target):
+    @staticmethod
+    def compute_context_scores(context_data, meta_file, 
+                               cont_cont='spearman', cat_cat='chi2', 
+                               cat_cont_b='mann-whitney u', cat_cont_m='kruskal-wallis', 
+                               correction='bh'):
         # Separate the data into categorical and continuous data
         cat, cont = separate_cat_cont(context_data, meta_file)
 
         # Get test types
         tests = {
-            "contCont": self._cont_cont,
-            "catCat": self._cat_cat,
-            "catContB": self._cat_cont_b,
-            "catContM": self._cat_cont_m
+            "contCont": cont_cont,
+            "catCat": cat_cat,
+            "catContB": cat_cont_b,
+            "catContM": cat_cont_m
         }
 
         # Calculate scores
@@ -104,10 +115,10 @@ class DiffNet:
         # Take the adjusted p-value and the corresponding effect size
         column_names = scores.iloc[:, 2:].columns
         # TODO: this is unnecessary, remove this
-        if self._correction == 'bh':
+        if correction == 'bh':
             correction = 'benjamini_hb'
         else:
-            correction = self._correction
+            correction = correction
         p_adj = '_p_' + correction
         p_columns = [column for column in column_names if p_adj in column]
         e_columns = [column for column in column_names if '_e_' in column]
@@ -125,16 +136,6 @@ class DiffNet:
                     break
         
         scores_final = scores_final.sort_values(by=['label1', 'label2']).reset_index(drop=True)
-
-        # Update scores
-        if target == 1 or target == self.name1:
-            self._scores1 = scores_final
-            logging.info(f'Successfully computed association scores for context {target}.')
-        elif target == 2 or target == self.name2:
-            self._scores2 = scores_final
-            logging.info(f'Successfully computed association scores for context {target}.')
-        else:
-            raise ValueError(f'Invalid target {target}. Choose context data by name or number.')
 
         return scores_final     
         

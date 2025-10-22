@@ -11,7 +11,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                     n_bi=50, n_cont=50, n_samples=500, 
                     n_shift_cont=4, n_shift_bi=4, n_corr_cont=2, n_corr_bi=2, n_corr_mixed=2, n_both_cont=2, n_both_bi=2, n_both_mixed=2,
                     shift_cont=1.0, shift_bi=0.3, corr=0.7):
-
+    print('updated')
     if n_bi <= 0 and n_cont <= 0:
         raise ValueError('Either n_bi or n_cont needs to be larger than zero.') 
     if n_shift_cont + n_corr_cont*2 + n_both_cont*2 + n_corr_mixed + n_both_mixed > n_cont:
@@ -144,7 +144,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         context1.to_csv(os.path.join(path, f'{name1}.csv'))
         context2.to_csv(os.path.join(path, f'{name2}.csv'))
 
-    return context1, context2, shift_nodes, corr_nodes, shift_corr_nodes, meta
+    return context1, context2, meta, (shift_nodes, corr_nodes, shift_corr_nodes)
 
 
 # Helper function to set correlation in copula-based simulation

@@ -2,49 +2,11 @@ import numpy as np
 import pandas as pd
 import scipy.stats as sc
 import networkx as nx
-from itertools import combinations
-from collections import Counter, defaultdict
+from collections import defaultdict
 import igraph as ig
 
-from score_calculation import *
 
-
-# --- Statistical association tests and differential network computation ---
-# Compute pairwise association scores
-def compute_context_scores(data, pheno_meta_label, tests='all', correction='bh', path=None, name=None):
-    # Separate the data into categorical and continuous data
-    cat, cont = separate_cat_cont(data, pheno_meta_label)
-
-    # Calculate scores
-    scores = calculate_association_scores(cat, cont, tests)
-
-    # Take the adjusted p-value and the corresponding effect size
-    column_names = scores.iloc[:, 2:].columns
-    if correction == 'bh':
-        correction = 'benjamini_hb'
-    p_adj = '_p_' + correction
-    p_columns = [column for column in column_names if p_adj in column]
-    e_columns = [column for column in column_names if '_e_' in column]
-
-    scores_final = scores[['label1', 'label2']].copy()
-    for i in scores.index:
-        for p_type in p_columns:
-            if pd.notna(scores.loc[i, p_type]):
-                test = p_type.split('_')[0]
-                e_type = [column for column in e_columns if test in column][0]
-
-                scores_final.loc[i, 'raw-P'] = scores.loc[i, p_type]
-                scores_final.loc[i, 'raw-E'] = scores.loc[i, e_type]
-                scores_final.loc[i, 'test_type'] = test
-                break
-
-    if (path is not None) and (name is not None):
-        scores.to_csv(path + '/' + name + '_scores.csv')
-        scores_final.to_csv(path + '/' + name + '_scores_final.csv')
-
-    return scores, scores_final
-
-
+# --- Differential network computation ---
 # Compute absolute differences in edge scores between two contexts
 def subtract_edges(scores1, scores2, metrics, included_cols=None):
     if not scores1['label1'].equals(scores2['label1']) or not scores1['label2'].equals(scores2['label2']):
