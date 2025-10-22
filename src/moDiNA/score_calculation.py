@@ -253,23 +253,23 @@ def order_categories(data: pd.DataFrame):
     return data
 
 
-def separate_cat_cont(all_data, phenotypes_meta) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[None, None]:
+def separate_cat_cont(all_data, meta_file) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[None, None]:
     """
-    We separate the categorical and continuous phenotypes from the data. Any other input type is continuous anyway.
+    We separate the categorical and continuous variables from the data. Any other input type is continuous.
     :param all_data: DataFrame with all data
-    :param phenotypes_meta: DataFrame with metadata of the phenotypes
+    :param phenotypes_meta: DataFrame with metadata of the variables
     :return: tuple with the categorical and continuous phenotypes
     """
     if isinstance(all_data, type(None)):
         return None, None
-    if isinstance(phenotypes_meta, type(None)):
+    if isinstance(meta_file, type(None)):
         return pd.DataFrame(), all_data.copy()
 
-    cat_data = all_data.iloc[:, all_data.columns.isin(phenotypes_meta[phenotypes_meta.type.str.lower()
+    cat_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower()
                                                       .isin(["categorical", "boolean"])].label)].copy()
 
     # Extract continuous phenotypes
-    cont_data = all_data.iloc[:, ~all_data.columns.isin(phenotypes_meta[phenotypes_meta.type.str.lower()
+    cont_data = all_data.iloc[:, ~all_data.columns.isin(meta_file[meta_file.type.str.lower()
                                                         .isin(["categorical", "boolean", "time"])].label)].copy()
     return cat_data, cont_data
 

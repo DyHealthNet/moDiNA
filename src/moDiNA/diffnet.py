@@ -5,8 +5,7 @@ import logging
 import math
 
 class DiffNet:
-    def __init__(self, context1, context2, pheno_meta=None, 
-                 edge_metric=None, node_metric=None,
+    def __init__(self, context1, context2, meta_file, edge_metric, node_metric,
                  filter_method=None, filter_param=0, filter_metric=None, filter_rule=None,
                  stc_test='parametric', max_path_length=2,
                  cont_cont='spearman', cat_cat='chi2', cat_cont_b='mann-whitney u', cat_cont_m='kruskal-wallis', correction='bh',
@@ -50,13 +49,13 @@ class DiffNet:
         self._direct_rank = None
 
         # Compute differential network
-        self._compute_diff_network(context1=context1, context2=context2, pheno_meta=pheno_meta)
+        self._compute_diff_network(context1=context1, context2=context2, meta_file=meta_file)
 
 
-    def _compute_diff_network(self, context1, context2, pheno_meta):
+    def _compute_diff_network(self, context1, context2, meta_file):
         # Compute context scores
-        self._scores1 = self._compute_context_scores(context_data=context1, pheno_meta=pheno_meta, target=1)
-        self._scores2 = self._compute_context_scores(context_data=context2, pheno_meta=pheno_meta, target=2)
+        self._scores1 = self._compute_context_scores(context_data=context1, meta_file=meta_file, target=1)
+        self._scores2 = self._compute_context_scores(context_data=context2, meta_file=meta_file, target=2)
         assert self._scores1 is not None and self._scores2 is not None, 'Score calculation was unsuccessful.'
         
         # Min-Max rescaling for raw-P and raw-E
@@ -87,9 +86,9 @@ class DiffNet:
         return self._edges_diff, self._nodes_diff 
 
 
-    def _compute_context_scores(self, context_data, pheno_meta, target):
+    def _compute_context_scores(self, context_data, meta_file, target):
         # Separate the data into categorical and continuous data
-        cat, cont = separate_cat_cont(context_data, pheno_meta)
+        cat, cont = separate_cat_cont(context_data, meta_file)
 
         # Get test types
         tests = {
@@ -124,6 +123,8 @@ class DiffNet:
                     scores_final.loc[i, 'raw-E'] = scores.loc[i, e_type]
                     scores_final.loc[i, 'test_type'] = test
                     break
+        
+        scores_final = scores_final.sort_values(by=['label1', 'label2']).reset_index(drop=True)
 
         # Update scores
         if target == 1 or target == self.name1:
@@ -573,8 +574,8 @@ class DiffNet:
     # Save differential network
     def save_diff_net(self, path=None, nodes=True, edges=True):
         if path is not None:
-            file_path_edges = os.path.join(path, 'diff_net_edges.csv')
-            file_path_nodes = os.path.join(path, 'diff_net_nodes.csv')
+            file_path_edges = os.path.join(path, 'diff_edges.csv')
+            file_path_nodes = os.path.join(path, 'diff_nodes.csv')
         elif self.project_path is not None:
             file_path_edges = os.path.join(self.project_path, 'diff_net_edges.csv')
             file_path_nodes = os.path.join(self.project_path, 'diff_net_nodes.csv')
@@ -708,7 +709,5 @@ class DiffNet:
     def direct_rank(self):
         assert self._direct_rank is not None, 'Direct rank has not been applied yet.'
         return self._direct_rank
-
-
 
 
