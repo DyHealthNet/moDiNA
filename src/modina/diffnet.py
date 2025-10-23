@@ -75,7 +75,7 @@ class DiffNet:
         assert self._scores2 is not None, 'Min-Max rescaling was unsuccessful.'
 
         # Filtering
-        if any([self.filter_method, self.filter_metric, self.filter_rule, self.filter_param]):
+        if any([self._filter_method, self._filter_metric, self._filter_rule, self._filter_param]):
             self._scores1_processed, self._scores2_processed, context1_filtered, context2_filtered = self._filter(context1=context1, context2=context2)
         else:
             logging.warning('The differential network will be computed based on unfiltered data. No filter parameters were specified.')
@@ -147,72 +147,68 @@ class DiffNet:
         assert self._filter_metric in self._scores1.columns and self._filter_metric in self._scores2.columns, 'Min-Max rescaling was not performed yet.'
         
         # Check input parameters
-        if self.filter_method is None:
+        if self._filter_method is None:
             raise ValueError("Please provide a 'filter_method'.")
         
-        if self.filter_metric is None:
+        if self._filter_metric is None:
             raise ValueError("Please provide a 'filter_metric'.")
         
-        if self.filter_rule is None:
+        if self._filter_rule is None:
             raise ValueError("Please provide a 'filter_rule'.")
         
-        if self.filter_param is None:
+        if self._filter_param is None:
             raise ValueError("Please provide a 'filter_param'.")
 
 
-        ascending = True if self.filter_metric == 'adj-P' else False
+        ascending = True if self._filter_metric == 'adj-P' else False
 
         # Compute filtering threshold according to the specified method
         threshold1 = None
         threshold2 = None
-        n_nodes = len(np.unique(self._scores1[['label1', 'label2']].values.flatten()))
-        # TODO: find out if this is sufficient
-        n_nodes_easy = context1.shape[1]
-        print(n_nodes)
-        print(n_nodes_easy)
+        n_nodes = context1.shape[1]
         n_edges_before = self._scores1.shape[0]
 
-        if filter == 'threshold':
-            threshold1 = threshold2 = self.filter_param
+        if self._filter_method == 'threshold':
+            threshold1 = threshold2 = self._filter_param
 
-        elif filter == 'degree':
-            degree = self.filter_param
+        elif self._filter_method == 'degree':
+            degree = self._filter_param
             n_filtered_edges = math.ceil(degree * n_nodes / 2)
 
-            threshold1 = self._scores1[self.filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
-            threshold2 = self._scores2[self.filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
+            threshold1 = self._scores1[self._filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
+            threshold2 = self._scores2[self._filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
 
-        elif filter == 'density':
-            density = self.filter_param
+        elif self._filter_method == 'density':
+            density = self._filter_param
             possible_edges = n_nodes * (n_nodes - 1) / 2
             n_filtered_edges = math.ceil(density * possible_edges)
 
-            threshold1 = self._scores1[self.filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
-            threshold2 = self._scores2[self.filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
+            threshold1 = self._scores1[self._filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
+            threshold2 = self._scores2[self._filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
 
         else:
-            raise ValueError(f"Invalid filtering method '{filter}'. Choose from: 'threshold', 'degree' or 'density'")
+            raise ValueError(f"Invalid filtering method '{self._filter_method}'. Choose from: 'threshold', 'degree' or 'density'")
         
         # Apply the filtering threshold to scores and raw data if provided
-        if self.filter_rule == 'union':
+        if self._filter_rule == 'union':
             if ascending is True:
-                mask = (self._scores1[self.filter_metric] <= threshold1) | (
-                        self._scores2[self.filter_metric] <= threshold2)
+                mask = (self._scores1[self._filter_metric] <= threshold1) | (
+                        self._scores2[self._filter_metric] <= threshold2)
             else:
-                mask = (self._scores1[self.filter_metric] >= threshold1) | (
-                        self._scores2[self.filter_metric] >= threshold2)
+                mask = (self._scores1[self._filter_metric] >= threshold1) | (
+                        self._scores2[self._filter_metric] >= threshold2)
             
             # Apply mask
             self._scores1_processed = self._scores1[mask].copy()
             self._scores2_processed = self._scores2[mask].copy()
 
-        elif self.filter_rule == 'zero':
+        elif self._filter_rule == 'zero':
             if ascending is True:
-                mask1 = self._scores1[self.filter_metric] <= threshold1
-                mask2 = self._scores2[self.filter_metric] <= threshold2
+                mask1 = self._scores1[self._filter_metric] <= threshold1
+                mask2 = self._scores2[self._filter_metric] <= threshold2
             else:
-                mask1 = self._scores1[self.filter_metric] >= threshold1
-                mask2 = self._scores2[self.filter_metric] >= threshold2
+                mask1 = self._scores1[self._filter_metric] >= threshold1
+                mask2 = self._scores2[self._filter_metric] >= threshold2
             
             # Apply mask
             filtered1 = self._scores1[mask1].copy()
@@ -247,7 +243,7 @@ class DiffNet:
             self._scores2_processed = self._scores2_processed.reset_index()
         
         else:
-            raise ValueError(f"Invalid filtering rule '{self.filter_rule}'.")
+            raise ValueError(f"Invalid filtering rule '{self._filter_rule}'.")
 
         filtered_nodes = np.concatenate((self._scores1_processed['label1'].values,
                                          self._scores1_processed['label2'].values))
@@ -257,7 +253,7 @@ class DiffNet:
 
         n_edges_after = self._scores1_processed.shape[0]
 
-        logging.info(f'Successfully filtered the single networks using a {self._filter} of {self._filter_param}'
+        logging.info(f'Successfully filtered the single networks using a {self._filter_method} of {self._filter_param}'
                      f'based on {self._filter_metric} with the {self._filter_rule} rule. Reduced the number of edges from '
                      f'{n_edges_before} to {n_edges_after}.')      
        
@@ -489,7 +485,7 @@ class DiffNet:
                 self._direct_rank = ranks
             
             else:
-                raise ValueError(f"Invalid ranking algorithm {alg}."
+                raise ValueError(f"Invalid ranking algorithm {alg}. "
                                 "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank' or 'direct'.")
     
 

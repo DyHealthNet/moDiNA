@@ -1,0 +1,4 @@
+src/modina/__pycache__/
+poetry.lock
+dist/
+src/moDiNA.egg-info/

@@ -83,7 +83,7 @@ def nanpy_cat_cat(cat_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
     cat_phenotypes, cols = _df_to_numpy(cat_phenotypes)
     if cat_phenotypes.shape[1] < 2:
         return [None]
-    output = nanpy.chi_squared(cat_phenotypes, axis=1, threads=num_workers, nan_value=nan_value)
+    output = nanpy.chi_squared(cat_phenotypes, axis=1, threads=num_workers, nan_value=nan_value, use_numba=False)
     results = _nanpy_formatting(output, [cols], 'chi2')
 
     for col in results.columns:
