@@ -48,7 +48,8 @@ class DiffNet:
         self._pagerank = None
         self._dimontrank = None
         self._abs_dimontrank = None
-        self._direct_rank = None
+        self._direct_node_rank = None
+        self._direct_edge_rank = None
 
         # Compute differential network
         self._compute_diff_network(context1=context1, context2=context2, meta_file=meta_file)
@@ -409,7 +410,7 @@ class DiffNet:
         return self._nodes_diff
     
 
-    def compute_nodes_ranking(self, ranking_algs):
+    def compute_ranking(self, ranking_algs):
         assert self._nodes_diff is not None and self._edges_diff is not None, 'The differential network has not been computed yet.'
         
         for alg in ranking_algs:        
@@ -469,8 +470,8 @@ class DiffNet:
                 self._dimontrank = ranks
 
             # Direct ranking based on node metric
-            elif alg == 'direct':
-                if self._direct_rank is not None:
+            elif alg == 'direct_node':
+                if self._direct_node_rank is not None:
                     logging.info('Direct rank was already applied. It can be accessed directly.')
 
                 if self._node_metric is None:
@@ -482,12 +483,26 @@ class DiffNet:
                     ranks = pd.Series(ranking_scores).sort_values(ascending=True).index.tolist()
                 else:
                     ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
-                self._direct_rank = ranks
+                self._direct_node_rank = ranks
+            
+            elif alg == 'direct_edge':
+                if self._direct_edge_rank is not None:
+                    logging.info('Direct edge rank was already applied. It can be accessed directly.')
+
+                if self._edge_metric is None:
+                    raise ValueError('Direct edge ranking requires an edge metric'
+                                    'but the differential network was defined without one.')
+                
+                ranking_scores = self._edges_diff[['label1', 'label2', self._edge_metric]].copy()
+                ranking_scores = ranking_scores.sort_values(by=self._edge_metric, ascending=False).reset_index(drop=True)
+                ranks = ranking_scores[['label1', 'label2']].values.tolist()
+
+                self._direct_edge_rank = ranks
             
             else:
                 raise ValueError(f"Invalid ranking algorithm {alg}. "
-                                "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank' or 'direct'.")
-    
+                                "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' or 'direct_edge'.")
+        
 
     def save_ranking(self, ranking_algs, path=None):
         for alg in ranking_algs:            
@@ -501,41 +516,47 @@ class DiffNet:
             # Personalized PageRank
             if alg == 'PageRank+':
                 if self._personalized_pagerank is None:
-                    raise ValueError('PageRank+ has not been applied yet.')
+                    self.compute_ranking(ranking_algs=[alg])
                 else:
                     ranking_list = self._personalized_pagerank
 
             # PageRank
             if alg == 'PageRank':
                 if self._pagerank is None:
-                    raise ValueError('PageRank has not been applied yet.')
+                    self.compute_ranking(ranking_algs=[alg])
                 else:
                     ranking_list = self._pagerank
 
             # DimontRank with absolute difference
             if alg == 'absDimontRank':
                 if self._abs_dimontrank is None:
-                    raise ValueError('absDimontRank has not been applied yet.')
+                    self.compute_ranking(ranking_algs=[alg])
                 else:
                     ranking_list = self._abs_dimontrank
 
             # DimontRank with signed difference
             if alg == 'DimontRank':
                 if self._dimontrank is None:
-                    raise ValueError('DimontRank has not been applied yet.')
+                    self.compute_ranking(ranking_algs=[alg])
                 else:
                     ranking_list = self._dimontrank
 
             # Direct ranking based on node metric
-            if alg == 'direct':
-                if self._direct_rank is None:
-                    raise ValueError('Direct ranking has not been applied yet.')
+            if alg == 'direct_node':
+                if self._direct_node_rank is None:
+                    self.compute_ranking(ranking_algs=[alg])
                 else:
-                    ranking_list = self._direct_rank
+                    ranking_list = self._direct_node_rank
             
+            # Direct ranking based on edge metric
+            if alg == 'direct_edge':
+                if self._direct_edge_rank is None:
+                    self.compute_ranking(ranking_algs=[alg])
+                else:
+                    ranking_list = self._direct_edge_rank            
             else:
                 raise ValueError(f"Invalid ranking algorithm {alg}."
-                                 "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank' or 'direct'.")
+                                 "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' or 'direct_edge.")
 
             ranking_df = pd.DataFrame({"node": ranking_list, "rank": range(1, len(ranking_list) + 1)})
             ranking_df = ranking_df.sort_values("node")
@@ -703,8 +724,13 @@ class DiffNet:
         return self._dimontrank
     
     @property
-    def direct_rank(self):
-        assert self._direct_rank is not None, 'Direct rank has not been applied yet.'
-        return self._direct_rank
+    def direct_node_rank(self):
+        assert self._direct_node_rank is not None, 'Direct node rank has not been applied yet.'
+        return self._direct_node_rank
+    
+    @property
+    def direct_edge_rank(self):
+        assert self._direct_edge_rank is not None, 'Direct edge rank has not been applied yet.'
+        return self._direct_edge_rank
 
 
