@@ -752,6 +752,37 @@ class DiffNet:
             json.dump(params, f, indent=4)
         
 
+    @property
+    def project_path(self):
+        return self.project_path
+    
+    @project_path.setter
+    def project_path(self, path: str):
+        if not os.path.exists(path):
+            raise ValueError(f"The specified project path '{path}' does not exist.")
+        self.project_path = path
+
+    @property
+    def name1(self):
+        return self.name1
+    
+    @name1.setter
+    def name1(self, name: str):
+        if name == self.name2:
+            raise ValueError('The names of the two contexts must be different.')
+        self.name1 = name
+    
+    @property
+    def name2(self):
+        return self.name2
+    
+    @name2.setter
+    def name2(self, name: str):
+        if name == self.name1:
+            raise ValueError('The names of the two contexts must be different.')
+        self.name2 = name
+
+
     # Getter methods for private params (no setter methods to ensure immutability after initialization)
     @property
     def filter_method(self):
