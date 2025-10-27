@@ -11,6 +11,32 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                     n_bi=50, n_cont=50, n_samples=500, 
                     n_shift_cont=4, n_shift_bi=4, n_corr_cont=2, n_corr_bi=2, n_corr_mixed=2, n_both_cont=2, n_both_bi=2, n_both_mixed=2,
                     shift_cont=1.0, shift_bi=0.3, corr=0.7):
+    """
+    Simulate two contexts with binary and continuous nodes using a Gaussian copula.
+    
+    :param path: Path to save the simulated contexts and meta file. If None, files are not saved.
+    :param name1: Name of the first context.
+    :param name2: Name of the second context.
+    :param n_bi: Number of binary nodes to simulate.
+    :param n_cont: Number of continuous nodes to simulate.
+    :param n_samples: Number of samples per context.
+    :param n_shift_cont: Number of continuous nodes with an artificially introduced mean shift.
+    :param n_shift_bi: Number of binary nodes with an artificially introduced mean shift.
+    :param n_corr_cont: Number of continuous node pairs with an artifically introduced correlation difference.
+    :param n_corr_bi: Number of binary node pairs with an artificially introduced correlation difference.
+    :param n_corr_mixed: Number of mixed node pairs with an artificially introduced correlation difference.
+    :param n_both_cont: Number of continuous node pairs with both an aritificially introduced mean shift and correlation difference.
+    :param n_both_bi: Number of binary node pairs with both an artificially introduced mean shift and correlation difference.
+    :param n_both_mixed: Number of mixed node paris with both an artificially introduced mean shift and correlation difference.
+    :param shift_cont: Magnitude of the mean shift for continuous nodes (measured in standard deviations).
+    :param shift_bi: Magnitude of the mean shift for binary nodes (measured as change in class probability).
+    :param corr: Magnitude of the correlation difference (measured as correlation coefficient between 0 and 1).
+    :return: A tuple containing the two simulated contexts, a meta file and a list of ground truth nodes.
+             - context1: pd.DataFrame of the first simulated context.
+             - context2: pd.DataFrame of the second simulated context.
+             - meta: pd.DataFrame containing the data type for each simulated variable.
+             - ground_truth: A tuple containing three lists of ground truth nodes: (shift_nodes, corr_nodes, shift_corr_nodes).
+    """
     if n_bi <= 0 and n_cont <= 0:
         raise ValueError('Either n_bi or n_cont needs to be larger than zero.') 
     if n_shift_cont + n_corr_cont*2 + n_both_cont*2 + n_corr_mixed + n_both_mixed > n_cont:

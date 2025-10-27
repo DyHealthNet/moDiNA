@@ -1,35 +1,63 @@
 import os
 import logging
 import math
+from typing import Optional, Tuple
+import json
 
 from modina.score_calculation import *
 from modina.statistics_utils import *
 
 
 class DiffNet:
-    def __init__(self, context1, context2, meta_file, edge_metric, node_metric,
-                 filter_method=None, filter_param=0.0, filter_metric=None, filter_rule=None,
-                 stc_test='parametric', max_path_length=2,
-                 cont_cont='spearman', cat_cat='chi2', cat_cont_b='mann-whitney u', cat_cont_m='kruskal-wallis', correction='bh',
-                 nan_value=-89, num_workers=1,
-                 project_path=None, name1='context1', name2='context2'):
+    def __init__(self, context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str, node_metric: str,
+                 filter_method: Optional[str] = None, filter_param: Optional[float] = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
+                 stc_test: str = 'parametric', max_path_length: int=2,
+                 cont_cont: str = 'spearman', cat_cat: str = 'chi2', cat_cont_b: str = 'mann-whitney u', cat_cont_m: str = 'kruskal-wallis', 
+                 correction: str = 'bh', nan_value: int = -89, num_workers: int=1,
+                 project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2', save_params: bool = True):
+        """
+        Initialize the Differential Network class.
+
+        :param context1: The first context for the differential network analysis.
+        :param context2: The second context for the differential network analysis.
+        :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
+        :param edge_metric: Edge metric used to construct the differential network.
+        :param node_metric: Node metric used to construct the differential network.
+        :param filter_method: Method used for filtering. Defaults to None.
+        :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
+        :param filter_metric: Edge metric used for filtering. Defaults to None.
+        :param filter_rule: Rule to integrate the networks during filtering. Defaults to None.
+        :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'parametric'.
+        :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
+        :param cont_cont: Test for continuous-continuous association scores. Defaults to 'spearman'.
+        :param cat_cat: Test for categorical-categorical association scores. Defaults to 'chi2'.
+        :param cat_cont_b: Test for categorical-continuous association (binary) scores. Defaults to 'mann-whitney u'.
+        :param cat_cont_m: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal-wallis'.
+        :param correction: Correction method for multiple testing. Defaults to 'bh'.
+        :param nan_value: Value to represent NaN in the data. Defaults to -89.
+        :param num_workers: Number of workers for parallel processing. Defaults to 1.
+        :param project_path: Path to the project directory. Defaults to None.
+        :param name1: Name for the first context. Defaults to 'context1'.
+        :param name2: Name for the second context. Defaults to 'context2'.
+        :param save_params: Whether to save the parameters used to constuct the differential network. Defaults to True.
+        """
         # Project path and context names
         self.project_path = project_path
         self.name1 = name1
         self.name2 = name2
 
-        # Association scores
+        # Raw and processed scores
         self._scores1 = None
         self._scores2 = None
         self._scores1_processed = None
         self._scores2_processed = None
+
+        # Association score tests
         self._cont_cont = cont_cont
         self._cat_cat = cat_cat
         self._cat_cont_b = cat_cont_b
         self._cat_cont_m = cat_cont_m
         self._correction = correction
-        self._nan_value = nan_value
-        self._num_workers = num_workers
 
         # Differential network
         self._filter_method = filter_method
@@ -40,8 +68,6 @@ class DiffNet:
         self._node_metric = node_metric
         self._stc_test = stc_test
         self._max_path_length = max_path_length
-        self._edges_diff = None
-        self._nodes_diff = None
 
         # Rankings
         self._personalized_pagerank = None
@@ -52,17 +78,33 @@ class DiffNet:
         self._direct_edge_rank = None
 
         # Compute differential network
-        self._compute_diff_network(context1=context1, context2=context2, meta_file=meta_file)
+        self._edges_diff, self._nodes_diff = self._compute_diff_network(context1=context1, context2=context2, meta_file=meta_file, nan_value=nan_value, num_workers=num_workers)
+
+        # Save parameters
+        if save_params:
+            self.save_params()
 
 
-    def _compute_diff_network(self, context1, context2, meta_file):
+    def _compute_diff_network(self, context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame,
+                              nan_value: int = -89, num_workers: int = 1) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        End-to-end computation of a differential network by:
+        - Computing association scores for each context,
+        - Optionally filtering scores and context data according to the filtering configurations,
+        - Computing differential edge and node scores based on the specified edge and node metrics.
+        
+        :param context1: The first context for the differential network analysis.
+        :param context2: The second context for the differential network analysis.
+        :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
+        :param nan_value: Value to represent NaN in the data. Defaults to -89.
+        :param num_workers: Number of workers for parallel processing. Defaults to 1.
+        :return: A tuple (edges_diff, nodes_diff) containing the computed differential edges and nodes.
+        """
+        logging.info('Starting differential network computation...')
+
         # Compute context scores
-        self._scores1 = DiffNet.compute_context_scores(context_data=context1, meta_file=meta_file, 
-                                                       cont_cont=self._cont_cont, cat_cat=self._cat_cat,
-                                                       cat_cont_b=self._cat_cont_b, cat_cont_m=self._cat_cont_m)
-        self._scores2 = DiffNet.compute_context_scores(context_data=context2, meta_file=meta_file,
-                                                       cont_cont=self._cont_cont, cat_cat=self._cat_cat,
-                                                       cat_cont_b=self._cat_cont_b, cat_cont_m=self._cat_cont_m)
+        self._scores1 = self._compute_context_scores(context_data=context1, meta_file=meta_file, nan_value=nan_value, num_workers=num_workers)
+        self._scores2 = self._compute_context_scores(context_data=context2, meta_file=meta_file, nan_value=nan_value, num_workers=num_workers)
         assert self._scores1 is not None and self._scores2 is not None, 'Score calculation was unsuccessful.'
         logging.info('Association score calculation was successful for both contexts.')
 
@@ -86,40 +128,47 @@ class DiffNet:
             context2_filtered = context2.copy()
             
         # Edges
-        self._edges_diff = self._compute_diff_edges()
+        edges_diff = self._compute_diff_edges()
 
         # Nodes
-        self._nodes_diff = self._compute_diff_nodes(context1=context1_filtered, context2=context2_filtered)
+        nodes_diff = self._compute_diff_nodes(context1=context1_filtered, context2=context2_filtered)
 
-        return self._edges_diff, self._nodes_diff 
+        logging.info('Differential network computation was successfully completed. It is now possible to compute rankings using the compute_rankings() method.')
+
+        return edges_diff, nodes_diff 
 
 
-    @staticmethod
-    def compute_context_scores(context_data, meta_file, 
-                               cont_cont='spearman', cat_cat='chi2', 
-                               cat_cont_b='mann-whitney u', cat_cont_m='kruskal-wallis', 
-                               correction='bh'):
+    def _compute_context_scores(self, context_data: pd.DataFrame, meta_file: pd.DataFrame, nan_value: int = -89, num_workers: int = 1) -> pd.DataFrame:
+        """
+        Compute association scores for a given context.
+        
+        :param context_data: The raw context data (rows: samples, columns: variables).
+        :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
+        :param nan_value: Value to represent NaN in the data. Defaults to -89.
+        :param num_workers: Number of workers for parallel processing. Defaults to 1.
+        :return: A pd.DataFrame containing the computed association scores.
+        """
         # Separate the data into categorical and continuous data
         cat, cont = separate_cat_cont(context_data, meta_file)
 
         # Get test types
         tests = {
-            "contCont": cont_cont,
-            "catCat": cat_cat,
-            "catContB": cat_cont_b,
-            "catContM": cat_cont_m
+            "contCont": self._cont_cont,
+            "catCat": self._cat_cat,
+            "catContB": self._cat_cont_b,
+            "catContM": self._cat_cont_m
         }
 
         # Calculate scores
-        scores = calculate_association_scores(cat, cont, tests)
+        scores = calculate_association_scores(cat_data=cat, cont_data=cont, tests=tests, num_workers=num_workers, nan_value=nan_value)
 
         # Take the adjusted p-value and the corresponding effect size
         column_names = scores.iloc[:, 2:].columns
         # TODO: this is unnecessary, remove this
-        if correction == 'bh':
+        if self._correction == 'bh':
             correction = 'benjamini_hb'
         else:
-            correction = correction
+            correction = self._correction
         p_adj = '_p_' + correction
         p_columns = [column for column in column_names if p_adj in column]
         e_columns = [column for column in column_names if '_e_' in column]
@@ -141,7 +190,15 @@ class DiffNet:
         return scores_final     
         
 
-    def _filter(self, context1, context2):
+    def _filter(self, context1: pd.DataFrame, context2: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """
+        Filter association scores and context data based on the specified filtering configurations.
+
+        :param context1: The first context for the differential network analysis.
+        :param context2: The second context for the differential network analysis.
+        :return: A tuple containing the filtered scores and context data.
+        """
+
         assert self._scores1 is not None and self._scores2 is not None, 'Association scores have not been computed yet.'
         assert self._scores1['label1'].equals(self._scores2['label1']), 'Contexts need to have the same structure and order of edges.'
         assert self._scores1['label2'].equals(self._scores2['label2']), 'Contexts need to have the same structure and order of edges.'
@@ -200,8 +257,8 @@ class DiffNet:
                         self._scores2[self._filter_metric] >= threshold2)
             
             # Apply mask
-            self._scores1_processed = self._scores1[mask].copy()
-            self._scores2_processed = self._scores2[mask].copy()
+            scores1_processed = self._scores1[mask].copy()
+            scores2_processed = self._scores2[mask].copy()
 
         elif self._filter_rule == 'zero':
             if ascending is True:
@@ -219,8 +276,8 @@ class DiffNet:
 
             # Unify indices and set missing values
             indices = filtered1.index.union(filtered2.index)
-            self._scores1_processed = filtered1.reindex(indices)
-            self._scores2_processed = filtered2.reindex(indices)
+            scores1_processed = filtered1.reindex(indices)
+            scores2_processed = filtered2.reindex(indices)
 
             fill_values = {
                 'raw-P': 1.0,
@@ -230,46 +287,53 @@ class DiffNet:
             }
 
             for metric, value in fill_values.items():
-                if metric in self._scores1_processed.columns:
-                    self._scores1_processed[metric] = self._scores1_processed[metric].fillna(value)
-                if metric in self._scores2_processed.columns:
-                    self._scores2_processed[metric] = self._scores2_processed[metric].fillna(value)
+                if metric in scores1_processed.columns:
+                    scores1_processed[metric] = scores1_processed[metric].fillna(value)
+                if metric in scores2_processed.columns:
+                    scores2_processed[metric] = scores2_processed[metric].fillna(value)
             
-            if 'test_type' in self._scores1_processed.columns and 'test_type' in self._scores2_processed.columns:
-                merged_test_type = self._scores1_processed['test_type'].combine_first(self._scores2_processed['test_type'])
-                self._scores1_processed['test_type'] = merged_test_type
-                self._scores2_processed['test_type'] = merged_test_type
+            if 'test_type' in scores1_processed.columns and 'test_type' in scores2_processed.columns:
+                merged_test_type = scores1_processed['test_type'].combine_first(scores2_processed['test_type'])
+                scores1_processed['test_type'] = merged_test_type
+                scores2_processed['test_type'] = merged_test_type
 
-            self._scores1_processed = self._scores1_processed.reset_index()
-            self._scores2_processed = self._scores2_processed.reset_index()
+            scores1_processed = scores1_processed.reset_index()
+            scores2_processed = scores2_processed.reset_index()
         
         else:
             raise ValueError(f"Invalid filtering rule '{self._filter_rule}'.")
 
-        filtered_nodes = np.concatenate((self._scores1_processed['label1'].values,
-                                         self._scores1_processed['label2'].values))
+        filtered_nodes = np.concatenate((scores1_processed['label1'].values,
+                                         scores1_processed['label2'].values))
         filtered_nodes = pd.unique(filtered_nodes)
         context1_filtered = context1[filtered_nodes].copy()
         context2_filtered = context2[filtered_nodes].copy()
 
-        n_edges_after = self._scores1_processed.shape[0]
+        n_edges_after = scores1_processed.shape[0]
 
         logging.info(f'Successfully filtered the single networks using a {self._filter_method} of {self._filter_param}'
                      f'based on {self._filter_metric} with the {self._filter_rule} rule. Reduced the number of edges from '
                      f'{n_edges_before} to {n_edges_after}.')      
        
-        return self._scores1_processed, self._scores2_processed, context1_filtered, context2_filtered
+        return scores1_processed, scores2_processed, context1_filtered, context2_filtered
 
 
-    def _compute_diff_edges(self):
+    def _compute_diff_edges(self) -> pd.DataFrame:
+        """
+        Compute differential edge scores based on the specified edge metric.
+        
+        :return: A DataFrame containing the computed differential edge scores.
+        """
         assert self._scores1_processed is not None and self._scores2_processed is not None, 'Filtering was unsuccessful.'
         assert 'adj-P' in self._scores1_processed.columns and 'adj-P' in self._scores2_processed.columns, 'Min-Max rescaling for raw-P was unsuccessful.'
         assert 'pre-E' in self._scores1_processed.columns and 'pre-E' in self._scores2_processed.columns, 'Min-Max rescaling for pre-E was unsuccessful.'
 
+        edges_diff = None
+
         if self._edge_metric is None:
             logging.warning('No edge_metric was specified. This setting will only work for the direct ranking algorithm.')
             # Take adj-P per default
-            self._edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
+            edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
                                               metrics=['adj-P'], included_cols=('test_type',))
 
         # Pre-rescaled effect size (pre-E) or rescaled multiple-testing adjusted p-value (adj-P)
@@ -279,10 +343,10 @@ class DiffNet:
         # Post-rescaled effect size (post-E)
         elif self._edge_metric == 'post-E':
             # Compute differences in edge metrics first
-            self._edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
+            edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
                                              metrics=['raw-E'], included_cols=['test_type'])
             # Min-Max rescaling
-            self._edges_diff, _ = min_max_rescaling(scores1=self._edges_diff, metric='post-E')
+            edges_diff, _ = min_max_rescaling(scores1=edges_diff, metric='post-E')
 
         # Pre-rescaled combined score (pre-CS)
         elif self._edge_metric == 'pre-CS':
@@ -293,12 +357,12 @@ class DiffNet:
         # Post-rescaled combined score (post-CS)
         elif self._edge_metric == 'post-CS':
             # Compute differences in edge metrics first
-            self._edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
+            edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
                                              metrics=['adj-P', 'raw-E'], included_cols=['test_type'])
             # Rescale difference in effect sizes
-            self._edges_diff, _ = min_max_rescaling(scores1=self._edges_diff, metric='post-E')
+            edges_diff, _ = min_max_rescaling(scores1=edges_diff, metric='post-E')
             # Compute combined score
-            self._edges_diff[self._edge_metric] = (self._edges_diff['post-E'] + self._edges_diff['adj-P'])
+            edges_diff[self._edge_metric] = (edges_diff['post-E'] + edges_diff['adj-P'])
 
         # Integrated Interaction Score (int-IS)
         elif self._edge_metric == 'int-IS':
@@ -337,27 +401,34 @@ class DiffNet:
         else:
             raise ValueError(f"Invalid edge metric '{self._edge_metric}'. Choose from: 'adj-P', 'pre-E', 'post-E', 'int-IS', 'pre-CS', 'post-CS' or 'log-CS'.")
 
-        if self._edges_diff is None:
+        if edges_diff is None:
             # Compute difference in edge scores
-            self._edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
+            edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
                                               metrics=[self._edge_metric], included_cols=('test_type',))
         
-        return self._edges_diff
+        return edges_diff
     
 
-    def _compute_diff_nodes(self, context1, context2):
+    def _compute_diff_nodes(self, context1: pd.DataFrame, context2: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute differential node scores based on the specified node metric.
+        
+        :return: A DataFrame containing the computed differential node scores.
+        """
         assert self._scores1_processed is not None and self._scores2_processed is not None, 'Filtering was unsuccessful.'
         assert context1.columns.equals(context2.columns), 'Context a and b need to have the same structure.'
         assert 'adj-P' in self._scores1_processed.columns and 'adj-P' in self._scores2_processed.columns, 'Min-Max rescaling for raw-P was unsuccessful.'
         assert 'pre-E' in self._scores1_processed.columns and 'pre-E' in self._scores2_processed.columns, 'Min-Max rescaling for pre-E was unsuccessful.'
 
+        nodes_diff = None
+
         if self._node_metric is None:
             logging.warning('No node_metric was specified. This setting will only work for the PageRank and DimontRank algorithm.')
-            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+            nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
 
         # Statistical test centrality (STC)
         if self._node_metric == 'STC':
-            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=True, test_type=self._stc_test, correction=self._correction)
+            nodes_diff = subtract_nodes(context1=context1, context2=context2, test=True, test_type=self._stc_test, correction=self._correction)
 
         # Degree centrality (DC)
         elif self._node_metric == 'DC':
@@ -366,8 +437,8 @@ class DiffNet:
                 dc_metric = 'adj-P'
             else:
                 dc_metric = self._filter_metric
-            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
-            self._nodes_diff = calculate_degree_centrality(nodes_diff=self._nodes_diff, metric=dc_metric, weighted=False,
+            nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+            nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, metric=dc_metric, weighted=False,
                                                            scores1=self._scores1_processed, scores2=self._scores2_processed)
             
         # Degree centrality and statistical test centrality combined (DC-STC)
@@ -377,40 +448,45 @@ class DiffNet:
                 dc_metric = 'adj-P'
             else:
                 dc_metric = self._filter_metric
-            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=True, test_type=self._stc_test, correction=self._correction)
-            self._nodes_diff = calculate_degree_centrality(nodes_diff=self._nodes_diff, metric=dc_metric, weighted=False,
+            nodes_diff = subtract_nodes(context1=context1, context2=context2, test=True, test_type=self._stc_test, correction=self._correction)
+            nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, metric=dc_metric, weighted=False,
                                                            scores1=self._scores1_processed, scores2=self._scores2_processed)
             
-            self._nodes_diff['DC-STC'] = self._nodes_diff['DC'] - self._nodes_diff['STC'] + 1.0        
+            nodes_diff['DC-STC'] = nodes_diff['DC'] - nodes_diff['STC'] + 1.0        
         
         # Weighted degree centrality based on adj-P (WDC-P)
         elif self._node_metric == 'WDC-P':
-            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
-            self._nodes_diff = calculate_degree_centrality(nodes_diff=self._nodes_diff, metric='adj-P', weighted=True,
+            nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+            nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, metric='adj-P', weighted=True,
                                                            scores1=self._scores1_processed, scores2=self._scores2_processed)
 
         # Weighted degree centrality based on pre-E (WDC-E)
         elif self._node_metric == 'WDC-E':
-            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
-            self._nodes_diff = calculate_degree_centrality(nodes_diff=self._nodes_diff, metric='pre-E', weighted=True,
+            nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+            nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, metric='pre-E', weighted=True,
                                                            scores1=self._scores1_processed, scores2=self._scores2_processed)
 
         # PageRank centrality (PRC)
         elif self._node_metric == 'PRC':
-            self._nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+            nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
 
             # TODO: allow 'adj-P' metric for PRC (don't forget to invert)
 
-            self._nodes_diff = calculate_pagerank_centrality(nodes_diff=self._nodes_diff, metric='pre-E', invert=False,
+            nodes_diff = calculate_pagerank_centrality(nodes_diff=nodes_diff, metric='pre-E', invert=False,
                                                              scores1=self._scores1_processed, scores2=self._scores2_processed)
 
         else:
             raise ValueError(f"Invalid node metric '{self._node_metric}'. Choose from: 'DC', 'STC', 'DC-STC', 'WDC-P', 'WDC-E' or 'PRC'.")
 
-        return self._nodes_diff
+        return nodes_diff
     
 
-    def compute_ranking(self, ranking_algs):
+    def compute_rankings(self, ranking_algs: list[str]):
+        """
+        Compute multiple rankings based on the specified ranking algorithms.
+        
+        :param ranking_algs: List of ranking algorithms to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'.
+        """
         assert self._nodes_diff is not None and self._edges_diff is not None, 'The differential network has not been computed yet.'
         
         for alg in ranking_algs:        
@@ -504,7 +580,12 @@ class DiffNet:
                                 "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' or 'direct_edge'.")
         
 
-    def save_ranking(self, ranking_algs, path=None):
+    def save_rankings(self, ranking_algs: list[str], path: Optional[str] = None):
+        """
+        Save specified rankings to CSV files. If the specified rankings have not been computed yet, they will be computed first.
+        
+        :param ranking_algs: List of ranking algorithms to save. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'.
+        """
         for alg in ranking_algs:            
             if path is not None:
                 file_path = os.path.join(path, f"ranking_{alg}.csv")
@@ -516,42 +597,42 @@ class DiffNet:
             # Personalized PageRank
             if alg == 'PageRank+':
                 if self._personalized_pagerank is None:
-                    self.compute_ranking(ranking_algs=[alg])
+                    self.compute_rankings(ranking_algs=[alg])
                 else:
                     ranking_list = self._personalized_pagerank
 
             # PageRank
             if alg == 'PageRank':
                 if self._pagerank is None:
-                    self.compute_ranking(ranking_algs=[alg])
+                    self.compute_rankings(ranking_algs=[alg])
                 else:
                     ranking_list = self._pagerank
 
             # DimontRank with absolute difference
             if alg == 'absDimontRank':
                 if self._abs_dimontrank is None:
-                    self.compute_ranking(ranking_algs=[alg])
+                    self.compute_rankings(ranking_algs=[alg])
                 else:
                     ranking_list = self._abs_dimontrank
 
             # DimontRank with signed difference
             if alg == 'DimontRank':
                 if self._dimontrank is None:
-                    self.compute_ranking(ranking_algs=[alg])
+                    self.compute_rankings(ranking_algs=[alg])
                 else:
                     ranking_list = self._dimontrank
 
             # Direct ranking based on node metric
             if alg == 'direct_node':
                 if self._direct_node_rank is None:
-                    self.compute_ranking(ranking_algs=[alg])
+                    self.compute_rankings(ranking_algs=[alg])
                 else:
                     ranking_list = self._direct_node_rank
             
             # Direct ranking based on edge metric
             if alg == 'direct_edge':
                 if self._direct_edge_rank is None:
-                    self.compute_ranking(ranking_algs=[alg])
+                    self.compute_rankings(ranking_algs=[alg])
                 else:
                     ranking_list = self._direct_edge_rank            
             else:
@@ -564,7 +645,13 @@ class DiffNet:
 
 
     # Save (processed) association scores
-    def save_scores(self, path=None, processed=True):
+    def save_scores(self, path: Optional[str] = None, processed: bool = True):
+        """
+        Save association scores to CSV files.
+        
+        :param path: Directory path where to save the scores. If None, the project_path specified during initialization will be used.
+        :param processed: If true, save the processed (filtered) scores instead of the raw scores. Defaults to True.
+        """
         if processed:
             suffix = 'scores_processed.csv'
         else:
@@ -590,7 +677,14 @@ class DiffNet:
 
     
     # Save differential network
-    def save_diff_net(self, path=None, nodes=True, edges=True):
+    def save_diff_net(self, path: Optional[str] = None, nodes: bool = True, edges: bool = True):
+        """
+        Save the differential network to CSV files.
+        
+        :param path: Directory path where to save the differential network. If None, the project_path specified during initialization will be used.
+        :param nodes: If true, save the differential node scores. Defaults to True.
+        :param edges: If true, save the differential edge scores. Defaults to True.
+        """
         if path is not None:
             file_path_edges = os.path.join(path, 'diff_edges.csv')
             file_path_nodes = os.path.join(path, 'diff_nodes.csv')
@@ -610,9 +704,55 @@ class DiffNet:
 
     # Print summary of parameters
     def summary(self):
-        return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+        """
+        Return a summary of the DiffNet parameters as a dictionary.
+        
+        :return: A dictionary containing the DiffNet parameters.
+        """
+        params = {
+            'name1': self.name1,
+            'name2': self.name2,
+            'cont_cont': self._cont_cont,
+            'cat_cat': self._cat_cat,
+            'cat_cont_b': self._cat_cont_b,
+            'cat_cont_m': self._cat_cont_m,
+            'correction':  self._correction,
+            'filter_method': self._filter_method,
+            'filter_metric': self._filter_metric,
+            'filter_rule': self._filter_rule,
+            'filter_param': self._filter_param,
+            'edge_metric': self._edge_metric,
+            'node_metric': self._node_metric        
+        }
+        
+        if self._node_metric == 'STC':
+            params['stc_test'] = self._stc_test
+        if self._edge_metric == 'int-IS':
+            params['max_path_length'] = self._max_path_length
 
+        return params
+    
 
+    # Save summary of parameters
+    def save_params(self, path: Optional[str] = None):
+        """
+        Save a summary of the parameters to a JSON file.
+        
+        :param path: File path where to save the parameters. If None, the project_path specified during initialization will be used.
+        """
+        if path is not None:
+            file_path = path
+        elif self.project_path is not None:
+            file_path = os.path.join(self.project_path, 'diffnet_params.json')
+        else:
+            raise ValueError('Please provide a path where to save the parameters.')
+        
+        params = self.summary()
+        with open(file_path, 'w') as f:
+            json.dump(params, f, indent=4)
+        
+
+    # Getter methods for private params (no setter methods to ensure immutability after initialization)
     @property
     def filter_method(self):
         return self._filter_method
@@ -648,14 +788,6 @@ class DiffNet:
     @property
     def correction(self):
         return self._correction
-    
-    @property
-    def nan_value(self):
-        return self._nan_value
-    
-    @property
-    def num_workers(self):
-        return self._num_workers
     
     @property
     def edge_metric(self):
