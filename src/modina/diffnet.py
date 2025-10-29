@@ -14,7 +14,7 @@ class DiffNet:
                  stc_test: str = 'parametric', max_path_length: int=2,
                  cont_cont: str = 'spearman', cat_cat: str = 'chi2', cat_cont_b: str = 'mann-whitney u', cat_cont_m: str = 'kruskal-wallis', 
                  correction: str = 'bh', nan_value: int = -89, num_workers: int=1,
-                 project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2', save_params: bool = True):
+                 project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2', save_params: bool = False):
         """
         Initialize the Differential Network class.
 
@@ -39,12 +39,16 @@ class DiffNet:
         :param project_path: Path to the project directory. Defaults to None.
         :param name1: Name for the first context. Defaults to 'context1'.
         :param name2: Name for the second context. Defaults to 'context2'.
-        :param save_params: Whether to save the parameters used to constuct the differential network. Defaults to True.
+        :param save_params: Whether to save the parameters used to construct the differential network. Defaults to True.
         """
+        # Check if input data is in a valid format
+        self._check_input_data(context=context1, meta_file=meta_file)
+        self._check_input_data(context=context2, meta_file=meta_file)
+
         # Project path and context names
-        self.project_path = project_path
-        self.name1 = name1
-        self.name2 = name2
+        self._project_path = project_path
+        self._name1 = name1
+        self._name2 = name2
 
         # Raw and processed scores
         self._scores1 = None
@@ -578,7 +582,38 @@ class DiffNet:
             else:
                 raise ValueError(f"Invalid ranking algorithm {alg}. "
                                 "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' or 'direct_edge'.")
+    
+
+    def _check_input_data(self, context: pd.DataFrame, meta_file: pd.DataFrame) -> bool:
+        """
+        Check if the input data is in the expected format.
         
+        :param context: The context data to check.
+        :param meta_file: Metadata file containing one row per variable in the context data.
+        :return: The checked context data.
+        """
+        # Check if context is a DataFrame
+        if not isinstance(context, pd.DataFrame):
+            raise ValueError('The context data should be provided as a pandas DataFrame.')
+
+        # Check if meta_file is a DataFrame
+        if not isinstance(meta_file, pd.DataFrame):
+            raise ValueError('The meta_file should be provided as a pandas DataFrame.')
+
+        # Check if meta_file contains required columns
+        required_columns = {'label', 'type'}
+        if not required_columns.issubset(set(meta_file.columns)):
+            raise ValueError(f'The meta_file should contain the following columns: {required_columns}.')
+
+        # Check if all variables in context are present in meta_file
+        context_vars = set(context.columns)
+        meta_vars = set(meta_file['label'].values)
+        if not context_vars.issubset(meta_vars):
+            missing_vars = context_vars - meta_vars
+            raise ValueError(f'The following variables are missing in the meta_file: {missing_vars}.')
+
+        return True
+    
 
     def save_rankings(self, ranking_algs: list[str], path: Optional[str] = None):
         """
@@ -589,8 +624,8 @@ class DiffNet:
         for alg in ranking_algs:            
             if path is not None:
                 file_path = os.path.join(path, f"ranking_{alg}.csv")
-            elif self.project_path is not None:
-                file_path = os.path.join(self.project_path, f"ranking_{alg}.csv")
+            elif self._project_path is not None:
+                file_path = os.path.join(self._project_path, f"ranking_{alg}.csv")
             else:
                 raise ValueError('Please provide a path where to save the rankings.')
         
@@ -658,11 +693,11 @@ class DiffNet:
             suffix = 'scores.csv'
 
         if path is not None:
-            file_path1 = os.path.join(path, f'{self.name1}_{suffix}')
-            file_path2 = os.path.join(path, f'{self.name2}_{suffix}')
-        elif self.project_path is not None:
-            file_path1 = os.path.join(self.project_path, f'{self.name1}_{suffix}.csv')
-            file_path2 = os.path.join(self.project_path, f'{self.name2}_{suffix}.csv')
+            file_path1 = os.path.join(path, f'{self._name1}_{suffix}')
+            file_path2 = os.path.join(path, f'{self._name2}_{suffix}')
+        elif self._project_path is not None:
+            file_path1 = os.path.join(self._project_path, f'{self._name1}_{suffix}.csv')
+            file_path2 = os.path.join(self._project_path, f'{self._name2}_{suffix}.csv')
         else:
             raise ValueError('Please provide a path where to save the edge scores.')
         
@@ -677,30 +712,44 @@ class DiffNet:
 
     
     # Save differential network
-    def save_diff_net(self, path: Optional[str] = None, nodes: bool = True, edges: bool = True):
+    def save_diff_net(self, path: Optional[str] = None, format: str = 'csv'):
         """
-        Save the differential network to CSV files.
+        Save the differential network to CSV files or as GraphML.
         
         :param path: Directory path where to save the differential network. If None, the project_path specified during initialization will be used.
-        :param nodes: If true, save the differential node scores. Defaults to True.
-        :param edges: If true, save the differential edge scores. Defaults to True.
+        :param format: Format to save the differential network. Options are 'csv' or 'graphml'. Defaults to 'csv'.
         """
-        if path is not None:
-            file_path_edges = os.path.join(path, 'diff_edges.csv')
-            file_path_nodes = os.path.join(path, 'diff_nodes.csv')
-        elif self.project_path is not None:
-            file_path_edges = os.path.join(self.project_path, 'diff_net_edges.csv')
-            file_path_nodes = os.path.join(self.project_path, 'diff_net_nodes.csv')
-        else:
-            raise ValueError('Please provide a path where to save the differential network.')
-        
-        if edges:
-            assert self._edges_diff is not None, 'The differential edge scores have not been computed yet.'
+        assert self._edges_diff is not None, 'The differential edge scores have not been computed yet.'
+        assert self._nodes_diff is not None, 'The differential node scores have not been computed yet.'
+
+        if format == 'csv':
+            if path is not None:
+                file_path_edges = os.path.join(path, f'diff_edges.csv')
+                file_path_nodes = os.path.join(path, f'diff_nodes.csv')
+            elif self._project_path is not None:
+                file_path_edges = os.path.join(self._project_path, f'diff_edges.csv')
+                file_path_nodes = os.path.join(self._project_path, f'diff_nodes.csv')
+            else:
+                raise ValueError('Please provide a path where to save the differential network.')
+            
             self._edges_diff.to_csv(file_path_edges)
-        if nodes:
-            assert self._nodes_diff is not None, 'The differential node scores have not been computed yet.'
             self._nodes_diff.to_csv(file_path_nodes)
 
+        elif format == 'graphml':
+            if path is not None:
+                file_path = os.path.join(path, f'diff_net.graphml')
+            elif self._project_path is not None:
+                file_path = os.path.join(self._project_path, f'diff_net.graphml')
+            else:
+                raise ValueError('Please provide a path where to save the differential network.')
+            diff_net = nx.from_pandas_edgelist(self._edges_diff, 'label1', 'label2', self._edge_metric)
+            nx.set_node_attributes(diff_net, self._nodes_diff[self._node_metric].to_dict(), self._node_metric)
+
+            nx.write_graphml(diff_net, file_path)
+
+        else:
+            raise ValueError(f"Invalid format {format}. Choose from 'csv' or 'graphml'.")          
+            
 
     # Print summary of parameters
     def summary(self):
@@ -710,8 +759,8 @@ class DiffNet:
         :return: A dictionary containing the DiffNet parameters.
         """
         params = {
-            'name1': self.name1,
-            'name2': self.name2,
+            'name1': self._name1,
+            'name2': self._name2,
             'cont_cont': self._cont_cont,
             'cat_cat': self._cat_cat,
             'cat_cont_b': self._cat_cont_b,
@@ -742,8 +791,8 @@ class DiffNet:
         """
         if path is not None:
             file_path = path
-        elif self.project_path is not None:
-            file_path = os.path.join(self.project_path, 'diffnet_params.json')
+        elif self._project_path is not None:
+            file_path = os.path.join(self._project_path, 'diffnet_params.json')
         else:
             raise ValueError('Please provide a path where to save the parameters.')
         
@@ -752,35 +801,38 @@ class DiffNet:
             json.dump(params, f, indent=4)
         
 
+    # Getter and setter methods for public params
     @property
     def project_path(self):
-        return self.project_path
+        return self._project_path
     
     @project_path.setter
-    def project_path(self, path: str):
-        if not os.path.exists(path):
+    def project_path(self, path: str | None):
+        if path is None:
+            logging.info('No project path was specified.')
+        elif not os.path.exists(path):
             raise ValueError(f"The specified project path '{path}' does not exist.")
-        self.project_path = path
+        self._project_path = path
 
     @property
     def name1(self):
-        return self.name1
+        return self._name1
     
     @name1.setter
     def name1(self, name: str):
-        if name == self.name2:
+        if name == self._name2:
             raise ValueError('The names of the two contexts must be different.')
-        self.name1 = name
+        self._name1 = name
     
     @property
     def name2(self):
-        return self.name2
+        return self._name2
     
     @name2.setter
     def name2(self, name: str):
-        if name == self.name1:
+        if name == self._name1:
             raise ValueError('The names of the two contexts must be different.')
-        self.name2 = name
+        self._name2 = name
 
 
     # Getter methods for private params (no setter methods to ensure immutability after initialization)
