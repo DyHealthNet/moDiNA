@@ -1,7 +1,7 @@
 # moDiNA
 The Python package moDiNA provides a customizable end-to-end pipeline to perform **m**ulti-**o**mics **D**ifferential **N**etwork **A**nalysis. It was developed based on an extensive benchmark analysis, evaluated using both simulated and real data.
 
-![Pipeline Overview](docs/figures/workflow_overview.png)
+![Pipeline Overview](docs/figures/workflow.png)
 
 - Input raw observational multi-omics data from two contexts of interest.
 - Compute statistical association scores between all pairwise combinations of variables.
