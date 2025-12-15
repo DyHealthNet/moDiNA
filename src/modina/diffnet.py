@@ -10,11 +10,11 @@ from modina.statistics_utils import *
 
 class DiffNet:
     def __init__(self, context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str, node_metric: str,
-                 filter_method: Optional[str] = None, filter_param: Optional[float] = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
+                 filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
                  stc_test: str = 'parametric', max_path_length: int=2,
                  cont_cont: str = 'spearman', cat_cat: str = 'chi2', cat_cont_b: str = 'mann-whitney u', cat_cont_m: str = 'kruskal-wallis', 
                  correction: str = 'bh', nan_value: int = -89, num_workers: int=1,
-                 project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2', save_params: bool = False):
+                 project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2', save_config: bool = False):
         """
         Initialize the Differential Network class.
 
@@ -39,7 +39,7 @@ class DiffNet:
         :param project_path: Path to the project directory. Defaults to None.
         :param name1: Name for the first context. Defaults to 'context1'.
         :param name2: Name for the second context. Defaults to 'context2'.
-        :param save_params: Whether to save the parameters used to construct the differential network. Defaults to True.
+        :param save_config: Whether to save the configurations used to construct the differential network. Defaults to True.
         """
         # Check if input data is in a valid format
         self._check_input_data(context=context1, meta_file=meta_file)
@@ -84,9 +84,9 @@ class DiffNet:
         # Compute differential network
         self._edges_diff, self._nodes_diff = self._compute_diff_network(context1=context1, context2=context2, meta_file=meta_file, nan_value=nan_value, num_workers=num_workers)
 
-        # Save parameters
-        if save_params:
-            self.save_params()
+        # Save configuration
+        if save_config:
+            self.save_config()
 
 
     def _compute_diff_network(self, context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame,
@@ -712,7 +712,7 @@ class DiffNet:
 
     
     # Save differential network
-    def save_diff_net(self, path: Optional[str] = None, format: str = 'csv'):
+    def save_diffnet(self, path: Optional[str] = None, format: str = 'csv'):
         """
         Save the differential network to CSV files or as GraphML.
         
@@ -783,16 +783,16 @@ class DiffNet:
     
 
     # Save summary of parameters
-    def save_params(self, path: Optional[str] = None):
+    def save_config(self, path: Optional[str] = None):
         """
-        Save a summary of the parameters to a JSON file.
+        Save a summary of the configurations to a JSON file.
         
         :param path: File path where to save the parameters. If None, the project_path specified during initialization will be used.
         """
         if path is not None:
             file_path = path
         elif self._project_path is not None:
-            file_path = os.path.join(self._project_path, 'diffnet_params.json')
+            file_path = os.path.join(self._project_path, 'diffnet_config.json')
         else:
             raise ValueError('Please provide a path where to save the parameters.')
         

@@ -101,13 +101,25 @@ def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='adj-P', we
 
             for i in scores1.index:
                 if (scores1.loc[i, 'label1'] == node) or (scores1.loc[i, 'label2'] == node):
-                    if scores1.loc[i, metric] != 0: 
-                        count1 += 1
+                    if metric == 'adj-P':
+                        if scores1.loc[i, metric] != 1:
+                            count1 += 1
+                    elif metric == 'pre-E':
+                        if scores1.loc[i, metric] != 0: 
+                            count1 += 1
+                    else:
+                        raise ValueError(f"Invalid metric '{metric}' for differential degree centrality.")
 
             for i in scores2.index:
                 if (scores2.loc[i, 'label1'] == node) or (scores2.loc[i, 'label2'] == node):
-                    if scores2.loc[i, metric] != 0: 
-                        count2 += 1
+                    if metric == 'adj-P':
+                        if scores2.loc[i, metric] != 1:
+                            count2 += 1
+                    elif metric == 'pre-E':
+                        if scores2.loc[i, metric] != 0:
+                            count2 += 1
+                    else:
+                        raise ValueError(f"Invalid metric '{metric}' for differential degree centrality.")
 
             degree_centrality.loc[node, 'context_a'] = count1
             degree_centrality.loc[node, 'context_b'] = count2
