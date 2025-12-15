@@ -9,9 +9,9 @@ from modina.statistics_utils import *
 
 
 class DiffNet:
-    def __init__(self, context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str, node_metric: str,
+    def __init__(self, context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'log-CS', node_metric: str = 'STC',
                  filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
-                 stc_test: str = 'parametric', max_path_length: int=2,
+                 stc_test: str = 'non-parametric', max_path_length: int=2,
                  cont_cont: str = 'spearman', cat_cat: str = 'chi2', cat_cont_b: str = 'mann-whitney u', cat_cont_m: str = 'kruskal-wallis', 
                  correction: str = 'bh', nan_value: int = -89, num_workers: int=1,
                  project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2', save_config: bool = False):
@@ -21,13 +21,13 @@ class DiffNet:
         :param context1: The first context for the differential network analysis.
         :param context2: The second context for the differential network analysis.
         :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
-        :param edge_metric: Edge metric used to construct the differential network.
-        :param node_metric: Node metric used to construct the differential network.
+        :param edge_metric: Edge metric used to construct the differential network. Defaults to 'log-CS'.
+        :param node_metric: Node metric used to construct the differential network. Defaults to 'STC'.
         :param filter_method: Method used for filtering. Defaults to None.
         :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
         :param filter_metric: Edge metric used for filtering. Defaults to None.
         :param filter_rule: Rule to integrate the networks during filtering. Defaults to None.
-        :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'parametric'.
+        :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'non-parametric'.
         :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
         :param cont_cont: Test for continuous-continuous association scores. Defaults to 'spearman'.
         :param cat_cat: Test for categorical-categorical association scores. Defaults to 'chi2'.
