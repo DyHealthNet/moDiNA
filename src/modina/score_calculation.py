@@ -49,7 +49,7 @@ def _nanpy_formatting(assoc_out: dict[np.array], labels: list, test: str, file_n
     return df
 
 
-def _combine_tests(cat_cat, cont_cont, cat_cont_b, cat_cont_m) -> pd.DataFrame:
+def _combine_tests(cat_cat, cont_cont, bi_cont, cont_cat) -> pd.DataFrame:
     """
     Combine the non-parametric tests with the parametric tests, giving the non-parametric tests the suffix '_np'.
     If no non-parametric results are given, empty columns 'pval_np', 'effsize_np', 'test_np' are created.
@@ -59,7 +59,7 @@ def _combine_tests(cat_cat, cont_cont, cat_cont_b, cat_cont_m) -> pd.DataFrame:
     """
     all_results = []
 
-    for results in [cat_cat, cont_cont, cat_cont_b, cat_cont_m]:
+    for results in [cat_cat, cont_cont, bi_cont, cont_cat]:
         merged = None
         for test in results:
             if test is None:
@@ -276,10 +276,10 @@ def separate_cat_cont(all_data, meta_file) -> tuple[pd.DataFrame, pd.DataFrame] 
 
 def calculate_association_scores(cat_data, cont_data, tests, num_workers=1, nan_value=-89) -> pd.DataFrame:
     if isinstance(tests, str):
-        tests = {'contCont': tests,
-                 'catCat': tests,
-                 'catContB': tests,
-                 'catContM': tests}
+        tests = {'cont_cont': tests,
+                 'cat_cat': tests,
+                 'bi_cont': tests,
+                 'cont_cat': tests}
 
     cont_data = cont_data.copy()
     cont_data = cont_data.select_dtypes(include=[np.number])
@@ -290,19 +290,19 @@ def calculate_association_scores(cat_data, cont_data, tests, num_workers=1, nan_
 
     # Continuous-Categorical association testing
     # TODO: enable cat_cont testing (add dummy vars as for other tests before re-enabling!)
-    #cat_cont_more = nanpy_cat_cont(cont_data, cat_data, tests.get('catContM'))
+    #cont_catore = nanpy_cat_cont(cont_data, cat_data, tests.get('cont_cat'))
     #logging.info("Finished continuous-categorical score creation")
-    cat_cont_more = pd.DataFrame()
+    cont_catore = pd.DataFrame()
 
-    cat_cont_two = nanpy_binary_cat_cont(cont_data, cat_data, test=tests.get('catContB'), num_workers=num_workers, nan_value=nan_value)
+    cat_cont_two = nanpy_binary_cat_cont(cont_data, cat_data, test=tests.get('bi_cont'), num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-binary score creation")
     
     cat_cat_results = nanpy_cat_cat(cat_data, num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished categorical-categorical score creation")
     
-    cont_cont_results = nanpy_cont_cont(cont_data, test=tests.get('contCont'), num_workers=num_workers, nan_value=nan_value)
+    cont_cont_results = nanpy_cont_cont(cont_data, test=tests.get('cont_cont'), num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-continuous score creation")
 
-    scores = _combine_tests(cat_cat_results, cont_cont_results, cat_cont_two, cat_cont_more)
+    scores = _combine_tests(cat_cat_results, cont_cont_results, cat_cont_two, cont_catore)
     
     return scores

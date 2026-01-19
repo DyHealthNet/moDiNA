@@ -12,7 +12,7 @@ class DiffNet:
     def __init__(self, context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'log-CS', node_metric: str = 'STC',
                  filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
                  stc_test: str = 'non-parametric', max_path_length: int=2,
-                 cont_cont: str = 'spearman', cat_cat: str = 'chi2', cat_cont_b: str = 'mann-whitney u', cat_cont_m: str = 'kruskal-wallis', 
+                 cont_cont: str = 'spearman', cat_cat: str = 'chi2', bi_cont: str = 'mann-whitney u', cont_cat: str = 'kruskal-wallis', 
                  correction: str = 'bh', nan_value: int = -89, num_workers: int=1,
                  project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2', save_config: bool = False):
         """
@@ -31,9 +31,9 @@ class DiffNet:
         :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
         :param cont_cont: Test for continuous-continuous association scores. Defaults to 'spearman'.
         :param cat_cat: Test for categorical-categorical association scores. Defaults to 'chi2'.
-        :param cat_cont_b: Test for categorical-continuous association (binary) scores. Defaults to 'mann-whitney u'.
-        :param cat_cont_m: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal-wallis'.
-        :param correction: Correction method for multiple testing. Defaults to 'bh'.
+        :param bi_cont: Test for categorical-continuous association (binary) scores. Defaults to 'mann-whitney u'.
+        :param cont_cat: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal-wallis'.
+        :param correction: Correction method for multiple testing. Defaults to 'benjamini_hb'.
         :param nan_value: Value to represent NaN in the data. Defaults to -89.
         :param num_workers: Number of workers for parallel processing. Defaults to 1.
         :param project_path: Path to the project directory. Defaults to None.
@@ -59,8 +59,8 @@ class DiffNet:
         # Association score tests
         self._cont_cont = cont_cont
         self._cat_cat = cat_cat
-        self._cat_cont_b = cat_cont_b
-        self._cat_cont_m = cat_cont_m
+        self._bi_cont = bi_cont
+        self._cont_cat = cont_cat
         self._correction = correction
 
         # Differential network
@@ -157,10 +157,10 @@ class DiffNet:
 
         # Get test types
         tests = {
-            "contCont": self._cont_cont,
-            "catCat": self._cat_cat,
-            "catContB": self._cat_cont_b,
-            "catContM": self._cat_cont_m
+            "cont_cont": self._cont_cont,
+            "cat_cat": self._cat_cat,
+            "bi_cont": self._bi_cont,
+            "cont_cat": self._cont_cat
         }
 
         # Calculate scores
@@ -168,11 +168,11 @@ class DiffNet:
 
         # Take the adjusted p-value and the corresponding effect size
         column_names = scores.iloc[:, 2:].columns
-        # TODO: this is unnecessary, remove this
         if self._correction == 'bh':
             correction = 'benjamini_hb'
         else:
             correction = self._correction
+            
         p_adj = '_p_' + correction
         p_columns = [column for column in column_names if p_adj in column]
         e_columns = [column for column in column_names if '_e_' in column]
@@ -763,8 +763,8 @@ class DiffNet:
             'name2': self._name2,
             'cont_cont': self._cont_cont,
             'cat_cat': self._cat_cat,
-            'cat_cont_b': self._cat_cont_b,
-            'cat_cont_m': self._cat_cont_m,
+            'bi_cont': self._bi_cont,
+            'cont_cat': self._cont_cat,
             'correction':  self._correction,
             'filter_method': self._filter_method,
             'filter_metric': self._filter_metric,
@@ -861,12 +861,12 @@ class DiffNet:
         return self._cat_cat
     
     @property
-    def cat_cont_b(self):
-        return self._cat_cont_b
+    def bi_cont(self):
+        return self._bi_cont
     
     @property
-    def cat_cont_m(self):
-        return self._cat_cont_m
+    def cont_cat(self):
+        return self._cont_cat
     
     @property
     def correction(self):

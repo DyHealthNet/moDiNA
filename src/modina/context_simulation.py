@@ -181,8 +181,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         elif n_cont <= i < n_cont + n_bi:
             # Binary node
             p = np.random.uniform(0, 1)
-            context1_bi[node] = sc.stats.bernoulli.ppf(u1[i, :], p=p)
-            context2_bi[node] = sc.stats.bernoulli.ppf(u2[i, :], p=p)
+            context1_bi[node] = sc.stats.bernoulli.ppf(u1[i, :], p=p).astype(int)
+            context2_bi[node] = sc.stats.bernoulli.ppf(u2[i, :], p=p).astype(int)
         
         else:
             # Categorical node
