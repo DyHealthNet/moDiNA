@@ -1,16 +1,18 @@
+from typing import Optional
 import numpy as np
 import random
 import pandas as pd
-import scipy.stats as sc
-from pycop import simulation
+import scipy as sc
 import os
 
 
 # Simulate mixed data using a gaussian copula 
 def simulate_copula(path=None, name1='context1', name2='context2',
-                    n_bi=50, n_cont=50, n_samples=500, 
-                    n_shift_cont=4, n_shift_bi=4, n_corr_cont=2, n_corr_bi=2, n_corr_mixed=2, n_both_cont=2, n_both_bi=2, n_both_mixed=2,
-                    shift_cont=1.0, shift_bi=0.3, corr=0.7):
+                    n_bi=50, n_cont=50, n_cat=50, n_samples=500, 
+                    n_shift_cont=4, n_shift_bi=4, n_shift_cat=4, 
+                    n_corr_cont_cont=2, n_corr_bi_bi=2, n_corr_cat_cat=2, n_corr_bi_cont=2, n_corr_bi_cat=2, n_corr_cont_cat=2, 
+                    n_both_cont_cont=2, n_both_bi_bi=2, n_both_cat_cat=2, n_both_bi_cont=2, n_both_bi_cat=2, n_both_cont_cat=2,
+                    shift=0.5, corr=0.7):
     """
     Simulate two contexts with binary and continuous nodes using a Gaussian copula.
     
@@ -19,17 +21,24 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     :param name2: Name of the second context.
     :param n_bi: Number of binary nodes to simulate.
     :param n_cont: Number of continuous nodes to simulate.
+    :param n_cat: Number of categorical nodes to simulate.
     :param n_samples: Number of samples per context.
     :param n_shift_cont: Number of continuous nodes with an artificially introduced mean shift.
     :param n_shift_bi: Number of binary nodes with an artificially introduced mean shift.
-    :param n_corr_cont: Number of continuous node pairs with an artifically introduced correlation difference.
-    :param n_corr_bi: Number of binary node pairs with an artificially introduced correlation difference.
-    :param n_corr_mixed: Number of mixed node pairs with an artificially introduced correlation difference.
-    :param n_both_cont: Number of continuous node pairs with both an aritificially introduced mean shift and correlation difference.
-    :param n_both_bi: Number of binary node pairs with both an artificially introduced mean shift and correlation difference.
-    :param n_both_mixed: Number of mixed node paris with both an artificially introduced mean shift and correlation difference.
-    :param shift_cont: Magnitude of the mean shift for continuous nodes (measured in standard deviations).
-    :param shift_bi: Magnitude of the mean shift for binary nodes (measured as change in class probability).
+    :param n_shift_cat: Number of categorical nodes with an artificially introduced mean shift.
+    :param n_corr_cont_cont: Number of continuous node pairs with an artifically introduced correlation difference.
+    :param n_corr_bi_bi: Number of binary node pairs with an artificially introduced correlation difference.
+    :param n_corr_cat_cat: Number of categorical node pairs with an artificially introduced correlation difference.
+    :param n_corr_bi_cat: Number of binary-categorical node pairs with an artificially introduced correlation difference.
+    :param n_corr_cont_cat: Number of continuous-categorical node pairs with an artificially introduced correlation difference.
+    :param n_corr_bi_cont: Number of mixed node pairs with an artificially introduced correlation difference.
+    :param n_both_cont_cont: Number of continuous node pairs with both an aritificially introduced mean shift and correlation difference.
+    :param n_both_bi_bi: Number of binary node pairs with both an artificially introduced mean shift and correlation difference.
+    :param n_both_cat_cat: Number of categorical node pairs with both an artificially introduced mean shift and correlation difference.
+    :param n_both_bi_cat: Number of binary-categorical node pairs with both an artificially introduced mean shift and correlation difference.
+    :param n_both_cont_cat: Number of continuous-categorical node pairs with both an artificially introduced mean shift and correlation difference.
+    :param n_both_bi_cont: Number of mixed node pairs with both an artificially introduced mean shift and correlation difference.
+    :param shift: Magnitude of the mean shift.
     :param corr: Magnitude of the correlation difference (measured as correlation coefficient between 0 and 1).
     :return: A tuple containing the two simulated contexts, a meta file and a list of ground truth nodes.
              - context1: pd.DataFrame of the first simulated context.
@@ -37,12 +46,14 @@ def simulate_copula(path=None, name1='context1', name2='context2',
              - meta: pd.DataFrame containing the data type for each simulated variable.
              - ground_truth: A tuple containing three lists of ground truth nodes: (shift_nodes, corr_nodes, shift_corr_nodes).
     """
-    if n_bi <= 0 and n_cont <= 0:
-        raise ValueError('Either n_bi or n_cont needs to be larger than zero.') 
-    if n_shift_cont + n_corr_cont*2 + n_both_cont*2 + n_corr_mixed + n_both_mixed > n_cont:
+    if n_bi <= 0 and n_cont <= 0 and n_cat <= 0:
+        raise ValueError('Either n_bi, n_cont, or n_cat needs to be larger than zero.') 
+    if n_shift_cont + n_corr_cont_cont*2 + n_both_cont_cont*2 + n_corr_bi_cont + n_both_bi_cont + n_corr_cont_cat + n_both_cont_cat > n_cont:
         raise ValueError('The number of continuous abnormal nodes is larger than the total number of continuous nodes.')
-    if n_shift_bi + n_corr_bi*2 + n_both_bi*2 + n_corr_mixed + n_both_mixed > n_bi:
+    if n_shift_bi + n_corr_bi_bi*2 + n_both_bi_bi*2 + n_corr_bi_cont + n_both_bi_cont + n_corr_bi_cat + n_both_bi_cat > n_bi:
         raise ValueError('The number of binary abnormal nodes is larger than the total number of binary nodes.')
+    if n_shift_cat + n_corr_cat_cat*2 + n_both_cat_cat*2 + n_corr_bi_cat + n_both_bi_cat + n_corr_cont_cat + n_both_cont_cat > n_cat:
+        raise ValueError('The number of categorical abnormal nodes is larger than the total number of categorical nodes.')
 
     # Prepare dataframes
     cont_cols = [f"cont{i+1}" for i in range(n_cont)]
@@ -53,11 +64,15 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     context1_bi = pd.DataFrame(np.nan, index=range(n_samples), columns=bi_cols)
     context2_bi = pd.DataFrame(np.nan, index=range(n_samples), columns=bi_cols)
 
+    cat_cols = [f"cat{i+1}" for i in range(n_cat)]
+    context1_cat = pd.DataFrame(np.nan, index=range(n_samples), columns=cat_cols)
+    context2_cat = pd.DataFrame(np.nan, index=range(n_samples), columns=cat_cols)
+
     # Create meta file
-    all_cols = cont_cols + bi_cols
+    all_cols = cont_cols + bi_cols + cat_cols
     meta = pd.DataFrame({
         "label": all_cols,
-        "type": ["continuous"] * n_cont + ["boolean"] * n_bi
+        "type": ["continuous"] * n_cont + ["boolean"] * n_bi + ["categorical"] * n_cat
     })
 
     # Initialize lists for ground truth nodes
@@ -67,36 +82,61 @@ def simulate_copula(path=None, name1='context1', name2='context2',
 
     normal_nodes_cont = list(context1_cont.columns) if n_cont > 0 else []
     normal_nodes_bi = list(context1_bi.columns) if n_bi > 0 else []
-    nodes = normal_nodes_cont + normal_nodes_bi
+    normal_nodes_cat = list(context1_cat.columns) if n_cat > 0 else []
+    nodes = normal_nodes_cont + normal_nodes_bi + normal_nodes_cat
 
     # Create correlation matrix
-    n_vars = n_bi + n_cont
+    n_vars = n_bi + n_cont + n_cat
     corr1 = np.eye(n_vars)
     corr2 = np.eye(n_vars)
 
     # Introduce fixed correlations in context 1 (leave context 2 uncorrelated)
-    for _ in range(n_corr_cont):
-        node_pair, corr1, _, normal_nodes_cont = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont)
+    for _ in range(n_corr_cont_cont):
+        node_pair, corr1, _, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont)
         corr_nodes.append(node_pair)
 
-    for _ in range(n_corr_bi):
-        node_pair, corr1, normal_nodes_bi, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi)
+    for _ in range(n_corr_bi_bi):
+        node_pair, corr1, normal_nodes_bi, _, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi)
         corr_nodes.append(node_pair)
 
-    for _ in range(n_corr_mixed):
-        node_pair, corr1, normal_nodes_bi, normal_nodes_cont = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
+    for _ in range(n_corr_cat_cat):
+        node_pair, corr1, _, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cat=normal_nodes_cat)
         corr_nodes.append(node_pair)
 
-    for _ in range(n_both_cont):
-        node_pair, corr1, _, normal_nodes_cont = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont)
+    for _ in range(n_corr_bi_cont):
+        node_pair, corr1, normal_nodes_bi, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
+        corr_nodes.append(node_pair)
+
+    for _ in range(n_corr_bi_cat):
+        node_pair, corr1, normal_nodes_bi, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cat=normal_nodes_cat)
+        corr_nodes.append(node_pair)
+
+    for _ in range(n_corr_cont_cat):
+        node_pair, corr1, _, normal_nodes_cont, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
+        corr_nodes.append(node_pair)
+
+    for _ in range(n_both_cont_cont):
+        node_pair, corr1, _, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont)
         shift_corr_nodes.append(node_pair)
 
-    for _ in range(n_both_bi):
-        node_pair, corr1, normal_nodes_bi, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi)
+    for _ in range(n_both_bi_bi):
+        node_pair, corr1, normal_nodes_bi, _, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi)
         shift_corr_nodes.append(node_pair)
-    
-    for _ in range(n_both_mixed):
-        node_pair, corr1, normal_nodes_bi, normal_nodes_cont = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
+
+    for _ in range(n_both_cat_cat):
+        node_pair, corr1, _, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cat=normal_nodes_cat)
+        shift_corr_nodes.append(node_pair)
+
+    for _ in range(n_both_bi_cont):
+        node_pair, corr1, normal_nodes_bi, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
+        shift_corr_nodes.append(node_pair)
+
+    for _ in range(n_both_bi_cat):
+        node_pair, corr1, normal_nodes_bi, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cat=normal_nodes_cat)
+        shift_corr_nodes.append(node_pair)
+
+    for _ in range(n_both_cont_cat):
+        node_pair, corr1, _, normal_nodes_cont, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
         shift_corr_nodes.append(node_pair)
 
     # Randomly select nodes for mean shifts
@@ -112,54 +152,54 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         normal_nodes_bi.remove(node)
         shift_nodes.append(node)
 
+    for _ in range(n_shift_cat):
+        assert normal_nodes_cat, 'Introducing correlations was unsuccessful.'
+        node = random.choice(normal_nodes_cat)
+        normal_nodes_cat.remove(node)
+        shift_nodes.append(node)
+
+    mean_vector = np.zeros(n_vars)
+    for node in nodes:
+        if node in shift_nodes or any(node in pair for pair in shift_corr_nodes):
+            sign = random.choice([1, -1])
+            mean_vector[nodes.index(node)] = sign * shift
+
     # Gaussian copula
-    u1 = simulation.simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr1)
-    u2 = simulation.simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr2)
+    u1 = simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr1, mean_vector=np.zeros(n_vars))
+    u2 = simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr2, mean_vector=mean_vector)
 
     # Transform to marginal distributions using the inverse CDF
     for i, node in enumerate(nodes):
         if i < n_cont:
             # Continuous node
-            if node in shift_nodes or any(node in pair for pair in shift_corr_nodes):
-                # Mean shift
-                mean = np.random.uniform(-100, 100)
-                std = 1.0
-                sign = random.choice([1, -1])
-                context1_cont[node] = sc.norm.ppf(u1[i, :], loc=mean, scale=std)
-                mean += shift_cont * std * sign
-                context2_cont[node] = sc.norm.ppf(u2[i, :], loc=mean, scale=std)
-            
-            else:
-                # No mean shift
-                mean = np.random.uniform(-100, 100)
-                std = 1.0
-                context1_cont[node] = sc.norm.ppf(u1[i, :], loc=mean, scale=std)
-                context2_cont[node] = sc.norm.ppf(u2[i, :], loc=mean, scale=std)
+            # TODO: maybe change the mean to 0 (because the interval is arbitrarily chosen and may rise questions)
+            mean = np.random.uniform(-100, 100)
+            std = 1.0
+            context1_cont[node] = sc.stats.norm.ppf(u1[i, :], loc=mean, scale=std)
+            context2_cont[node] = sc.stats.norm.ppf(u2[i, :], loc=mean, scale=std)
 
-        else:
+        elif n_cont <= i < n_cont + n_bi:
             # Binary node
-            if node in shift_nodes or any(node in pair for pair in shift_corr_nodes):
-                # Mean shift
-                if shift_bi > 0.5:
-                    raise ValueError('Binary mean shift needs to be smaller or equal to 0.5')
-                p = np.random.uniform(0, 1)
-                context1_bi[node] = sc.bernoulli.ppf(u1[i, :], p=p)
-                if p > 0.5:
-                    p -= shift_bi
-                else:
-                    p += shift_bi  
-                context2_bi[node] = sc.bernoulli.ppf(u2[i, :], p=p)
-            else:
-                # No mean shift
-                p = np.random.uniform(0, 1)
-                context1_bi[node] = sc.bernoulli.ppf(u1[i, :], p=p)
-                context2_bi[node] = sc.bernoulli.ppf(u2[i, :], p=p)
+            p = np.random.uniform(0, 1)
+            context1_bi[node] = sc.stats.bernoulli.ppf(u1[i, :], p=p)
+            context2_bi[node] = sc.stats.bernoulli.ppf(u2[i, :], p=p)
+        
+        else:
+            # Categorical node
+            n_categories = np.random.randint(3, 10) # Randomly choose number of categories between 3 and 10
+            p = np.random.dirichlet(np.ones(n_categories), size=1).flatten()  # Random probabilities for each category
+            cdf = np.cumsum(p)
+            context1_cat[node] = np.searchsorted(cdf, u1[i, :])
+            context2_cat[node] = np.searchsorted(cdf, u2[i, :])
 
     ground_truth = shift_nodes + corr_nodes + shift_corr_nodes
 
     # Combine continuous and binary data
     context1 = context1_cont.join(context1_bi)
     context2 = context2_cont.join(context2_bi)
+
+    context1 = context1.join(context1_cat)
+    context2 = context2.join(context2_cat)
 
     context1 = context1.sort_index(axis=1)
     context2 = context2.sort_index(axis=1)
@@ -173,31 +213,79 @@ def simulate_copula(path=None, name1='context1', name2='context2',
 
 
 # Helper function to set correlation in copula-based simulation
-def _set_corr(nodes, corr_param, corr_matrix, normal_nodes_bi=None, normal_nodes_cont=None):
-    if normal_nodes_bi is not None and normal_nodes_cont is not None:
+def _set_corr(nodes, corr_param, corr_matrix, normal_nodes_bi=None, normal_nodes_cont=None, normal_nodes_cat=None):
+    if normal_nodes_bi is not None and normal_nodes_cont is not None and normal_nodes_cat is None:
         node1 = random.choice(normal_nodes_cont)
         normal_nodes_cont.remove(node1)
         node2 = random.choice(normal_nodes_bi)
         normal_nodes_bi.remove(node2)
 
-    elif normal_nodes_cont is None and normal_nodes_bi is not None:
+    elif normal_nodes_bi is not None and normal_nodes_cat is not None and normal_nodes_cont is None:
+        node1 = random.choice(normal_nodes_bi)
+        normal_nodes_bi.remove(node1)
+        node2 = random.choice(normal_nodes_cat)
+        normal_nodes_cat.remove(node2)
+
+    elif normal_nodes_cont is not None and normal_nodes_cat is not None and normal_nodes_bi is None:
+        node1 = random.choice(normal_nodes_cont)
+        normal_nodes_cont.remove(node1)
+        node2 = random.choice(normal_nodes_cat)
+        normal_nodes_cat.remove(node2)
+
+    elif normal_nodes_bi is not None and normal_nodes_cont is None and normal_nodes_cat is None:
         node1 = random.choice(normal_nodes_bi)
         normal_nodes_bi.remove(node1)
         node2 = random.choice(normal_nodes_bi)
         normal_nodes_bi.remove(node2)
     
-    elif normal_nodes_bi is None and normal_nodes_cont is not None:
+    elif normal_nodes_cont is not None and normal_nodes_bi is None and normal_nodes_cat is None:
         node1 = random.choice(normal_nodes_cont)
         normal_nodes_cont.remove(node1)
         node2 = random.choice(normal_nodes_cont)
         normal_nodes_cont.remove(node2)
+
+    elif normal_nodes_cat is not None and normal_nodes_bi is None and normal_nodes_cont is None:
+        node1 = random.choice(normal_nodes_cat)
+        normal_nodes_cat.remove(node1)
+        node2 = random.choice(normal_nodes_cat)
+        normal_nodes_cat.remove(node2)
     
     else:
-        raise ValueError('At least one of normal_nodes_bi or normal_nodes_cont must be provided.')
+        raise ValueError('At least one of normal_nodes_bi, normal_nodes_cont, or normal_nodes_cat must be provided.')
 
     idx1 = nodes.index(node1)
     idx2 = nodes.index(node2)
     sign = random.choice([1, -1])
     corr_matrix[idx1, idx2] = corr_matrix[idx2, idx1] = corr_param * sign
 
-    return (node1, node2), corr_matrix, normal_nodes_bi, normal_nodes_cont
+    return (node1, node2), corr_matrix, normal_nodes_bi, normal_nodes_cont, normal_nodes_cat
+
+
+# Adapted from pycop package
+def simu_gaussian(n: int, m: int, corr_matrix: np.ndarray, mean_vector: Optional[np.ndarray]=None):
+    """ 
+    # Gaussian Copula simulations with a given correlation matrix
+
+    :param n: number of simulated variables
+    :param m: sample size
+    :param corr_matrix: correlation matrix
+    :return: simulated samples from a Gaussian copula
+
+    """
+
+    if not all(isinstance(v, int) for v in [n, m]):
+        raise TypeError("The 'n' and 'm' arguments must both be integer types.")
+    if not isinstance(corr_matrix, np.ndarray):
+        raise TypeError("The 'corr_matrix' argument must be a numpy array.")
+    if not isinstance(mean_vector, np.ndarray):
+        mean_vector = np.zeros(n)
+
+    # Generate n independent standard Gaussian random variables V = (v1 ,..., vn):
+    v = [np.random.normal(mean_vector[i], 1, m) for i in range(0, n)]
+
+    # Compute the lower triangular Cholesky factorization of the correlation matrix:
+    l = sc.linalg.cholesky(corr_matrix, lower=True)
+    y = np.dot(l, v)
+    u = sc.stats.norm.cdf(y, 0, 1)
+
+    return u
