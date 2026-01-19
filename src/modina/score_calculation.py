@@ -288,13 +288,10 @@ def calculate_association_scores(cat_data, cont_data, tests, num_workers=1, nan_
 
     tests = {k: v.lower() for k, v in tests.items()}
 
-    # Continuous-Categorical association testing
-    # TODO: enable cat_cont testing (add dummy vars as for other tests before re-enabling!)
-    #cont_catore = nanpy_cat_cont(cont_data, cat_data, tests.get('cont_cat'))
-    #logging.info("Finished continuous-categorical score creation")
-    cont_catore = pd.DataFrame()
+    cont_cat_results = nanpy_cat_cont(cont_data, cat_data, tests.get('cont_cat'), num_workers=num_workers, nan_value=nan_value)
+    logging.info("Finished continuous-categorical score creation")
 
-    cat_cont_two = nanpy_binary_cat_cont(cont_data, cat_data, test=tests.get('bi_cont'), num_workers=num_workers, nan_value=nan_value)
+    bi_cont_results = nanpy_binary_cat_cont(cont_data, cat_data, test=tests.get('bi_cont'), num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-binary score creation")
     
     cat_cat_results = nanpy_cat_cat(cat_data, num_workers=num_workers, nan_value=nan_value)
@@ -303,6 +300,6 @@ def calculate_association_scores(cat_data, cont_data, tests, num_workers=1, nan_
     cont_cont_results = nanpy_cont_cont(cont_data, test=tests.get('cont_cont'), num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-continuous score creation")
 
-    scores = _combine_tests(cat_cat_results, cont_cont_results, cat_cont_two, cont_catore)
+    scores = _combine_tests(cat_cat_results, cont_cont_results, bi_cont_results, cont_cat_results)
     
     return scores

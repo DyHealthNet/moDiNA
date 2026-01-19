@@ -33,7 +33,7 @@ class DiffNet:
         :param cat_cat: Test for categorical-categorical association scores. Defaults to 'chi2'.
         :param bi_cont: Test for categorical-continuous association (binary) scores. Defaults to 'mann-whitney u'.
         :param cont_cat: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal-wallis'.
-        :param correction: Correction method for multiple testing. Defaults to 'benjamini_hb'.
+        :param correction: Correction method for multiple testing. Defaults to 'bh'.
         :param nan_value: Value to represent NaN in the data. Defaults to -89.
         :param num_workers: Number of workers for parallel processing. Defaults to 1.
         :param project_path: Path to the project directory. Defaults to None.
@@ -172,7 +172,7 @@ class DiffNet:
             correction = 'benjamini_hb'
         else:
             correction = self._correction
-            
+
         p_adj = '_p_' + correction
         p_columns = [column for column in column_names if p_adj in column]
         e_columns = [column for column in column_names if '_e_' in column]
