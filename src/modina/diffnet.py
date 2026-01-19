@@ -9,7 +9,7 @@ from modina.statistics_utils import *
 
 
 class DiffNet:
-    def __init__(self, context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'log-CS', node_metric: str = 'STC',
+    def __init__(self, context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'pre-LS', node_metric: str = 'STC',
                  filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
                  stc_test: str = 'non-parametric', max_path_length: int=2,
                  cont_cont: str = 'spearman', cat_cat: str = 'chi2', bi_cont: str = 'mann-whitney u', cont_cat: str = 'kruskal-wallis', 
@@ -21,7 +21,7 @@ class DiffNet:
         :param context1: The first context for the differential network analysis.
         :param context2: The second context for the differential network analysis.
         :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
-        :param edge_metric: Edge metric used to construct the differential network. Defaults to 'log-CS'.
+        :param edge_metric: Edge metric used to construct the differential network. Defaults to 'pre-LS'.
         :param node_metric: Node metric used to construct the differential network. Defaults to 'STC'.
         :param filter_method: Method used for filtering. Defaults to None.
         :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
@@ -330,7 +330,7 @@ class DiffNet:
         """
         assert self._scores1_processed is not None and self._scores2_processed is not None, 'Filtering was unsuccessful.'
         assert 'adj-P' in self._scores1_processed.columns and 'adj-P' in self._scores2_processed.columns, 'Min-Max rescaling for raw-P was unsuccessful.'
-        assert 'pre-E' in self._scores1_processed.columns and 'pre-E' in self._scores2_processed.columns, 'Min-Max rescaling for pre-E was unsuccessful.'
+        assert 'pre-E' in self._scores1_processed.columns and 'pre-E' in self._scores2_processed.columns, 'Min-Max rescaling for raw-E was unsuccessful.'
 
         edges_diff = None
 
@@ -350,7 +350,7 @@ class DiffNet:
             edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
                                              metrics=['raw-E'], included_cols=['test_type'])
             # Min-Max rescaling
-            edges_diff, _ = min_max_rescaling(scores1=edges_diff, metric='post-E')
+            edges_diff, _ = min_max_rescaling(scores1=edges_diff, metric=self._edge_metric)
 
         # Pre-rescaled combined score (pre-CS)
         elif self._edge_metric == 'pre-CS':
@@ -379,7 +379,7 @@ class DiffNet:
                                                                   max_path_length=self._max_path_length)
         
         # Log-transformed p-value and pre-rescaled effect size combined score
-        elif self._edge_metric == 'log-CS':
+        elif self._edge_metric == 'pre-LS':
             # Replace zero values by small epsilon (1/10 of the minimum non-zero value)
             p_vals_combined = np.concatenate([self._scores1_processed[self._scores1_processed['adj-P'] > 0]['adj-P'].to_numpy(), 
                                               self._scores2_processed[self._scores2_processed['adj-P'] > 0]['adj-P'].to_numpy()])
@@ -402,8 +402,38 @@ class DiffNet:
             self._scores1_processed[self._edge_metric] = values1
             self._scores2_processed[self._edge_metric] = values2
 
+        # Post rescaled absolute difference in (log-transformed raw p-value multiplied by raw effect size)
+        elif self._edge_metric == 'post-LS':
+            # Replace zero values by small epsilon (1/10 of the minimum non-zero value)
+            p_vals_combined = np.concatenate([self._scores1_processed[self._scores1_processed['raw-P'] > 0]['raw-P'].to_numpy(), 
+                                              self._scores2_processed[self._scores2_processed['raw-P'] > 0]['raw-P'].to_numpy()])
+            min_non_zero = p_vals_combined.min()
+            epsilon = min_non_zero / 10.0
+
+            p_vals1 = self._scores1_processed['raw-P'].to_numpy()
+            p_vals2 = self._scores2_processed['raw-P'].to_numpy()
+            p_vals1 = np.where(p_vals1 == 0, epsilon, p_vals1)
+            p_vals2 = np.where(p_vals2 == 0, epsilon, p_vals2)
+
+            # - log10(raw-P) * raw-E
+            values1 = - np.log10(p_vals1) * self._scores1_processed['raw-E']
+            values2 = - np.log10(p_vals2) * self._scores2_processed['raw-E']
+
+            # Replace -0.0 with +0.0
+            values1 = np.where(values1 == -0.0, 0.0, values1)
+            values2 = np.where(values2 == -0.0, 0.0, values2)
+
+            self._scores1_processed['raw-LS'] = values1
+            self._scores2_processed['raw-LS'] = values2
+
+            # Compute differences in edge metrics first
+            edges_diff = subtract_edges(self._scores1_processed, self._scores2_processed,
+                                        metrics=['raw-LS'], included_cols=['test_type'])
+            # Min-Max rescaling
+            edges_diff, _ = min_max_rescaling(scores1=edges_diff, metric=self._edge_metric)
+
         else:
-            raise ValueError(f"Invalid edge metric '{self._edge_metric}'. Choose from: 'adj-P', 'pre-E', 'post-E', 'int-IS', 'pre-CS', 'post-CS' or 'log-CS'.")
+            raise ValueError(f"Invalid edge metric '{self._edge_metric}'. Choose from: 'adj-P', 'pre-E', 'post-E', 'int-IS', 'pre-CS', 'post-CS', 'pre-LS' or 'post-LS'.")
 
         if edges_diff is None:
             # Compute difference in edge scores
