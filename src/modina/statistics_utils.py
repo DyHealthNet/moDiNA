@@ -172,6 +172,7 @@ def calculate_pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E', 
 
 
 # Min-Max rescaling to [0, 1]
+# TODO: separate into pre and post rescaling functions
 def min_max_rescaling(scores1, scores2=None, metric='pre-E'):
     scores1 = scores1.copy()
     if scores2 is not None:
@@ -242,7 +243,7 @@ def min_max_rescaling(scores1, scores2=None, metric='pre-E'):
 
             scores1.loc[scores1['test_type'] == test, metric] = rescaled
 
-        return scores1, None
+        return scores1, pd.DataFrame()
 
     else:
         raise ValueError(f"Invalid metric '{metric}'. Only 'pre-E', 'adj-P', 'post-E' and 'post-LS' are supported.")
