@@ -2,7 +2,7 @@
 
 import numpy as np
 import pandas as pd
-import napy as nanpy
+import napypi as napy
 import logging
 
 EXCLUDED_EFFECTS = {'chi2', 't', 'F', 'U', 'H'}
@@ -15,7 +15,7 @@ def _df_to_numpy(df: pd.DataFrame, nan_value=-89):
     return df_np, cols
 
 
-def _nanpy_formatting(assoc_out: dict[np.array], labels: list, test: str, file_name: str = None):
+def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str, file_name: str = None):
     if not assoc_out:
         return None
 
@@ -79,12 +79,12 @@ def _combine_tests(cat_cat, cont_cont, cat_cont_b, cat_cont_m) -> pd.DataFrame:
     return out
 
 
-def nanpy_cat_cat(cat_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
+def napy_cat_cat(cat_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
     cat_phenotypes, cols = _df_to_numpy(cat_phenotypes)
     if cat_phenotypes.shape[1] < 2:
         return [None]
-    output = nanpy.chi_squared(cat_phenotypes, axis=1, threads=num_workers, nan_value=nan_value, use_numba=False)
-    results = _nanpy_formatting(output, [cols], 'chi2')
+    output = napy.chi_squared(cat_phenotypes, axis=1, threads=num_workers, nan_value=nan_value, use_numba=False)
+    results = _napy_formatting(output, [cols], 'chi2')
 
     for col in results.columns:
         if "_e_" in col:
@@ -95,7 +95,7 @@ def nanpy_cat_cat(cat_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
     return [results]
 
 
-def nanpy_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, tests: str, num_workers=8, nan_value=-89):
+def napy_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, tests: str, num_workers=8, nan_value=-89):
     # split cat_phenotypes into two dataframes, one with columns that contain only two unique values and one with more
     # than two unique values
     if cat_phenotypes.shape[1] < 2:
@@ -109,20 +109,20 @@ def nanpy_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, 
     done_test_a, done_test_k = None, None
 
     if tests in ['all', 'anova']:
-        more_cont_out_a = nanpy.anova(cat_phenotypes_more, cont_phenotypes, axis=1,
+        more_cont_out_a = napy.anova(cat_phenotypes_more, cont_phenotypes, axis=1,
                                       threads=num_workers, nan_value=nan_value)
         done_test_a = "anova"
 
     if tests in ['all', 'kruskal-wallis']:
-        more_cont_out_k = nanpy.kruskal_wallis(cat_phenotypes_more, cont_phenotypes, axis=1,
+        more_cont_out_k = napy.kruskal_wallis(cat_phenotypes_more, cont_phenotypes, axis=1,
                                                threads=num_workers, nan_value=nan_value)
         done_test_k = "kruskal"
 
-    return [_nanpy_formatting(more_cont_out_a, [cat_cols_more, cont_cols], done_test_a),
-            _nanpy_formatting(more_cont_out_k, [cat_cols_more, cont_cols], done_test_k)]
+    return [_napy_formatting(more_cont_out_a, [cat_cols_more, cont_cols], done_test_a),
+            _napy_formatting(more_cont_out_k, [cat_cols_more, cont_cols], done_test_k)]
 
 
-def nanpy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
+def napy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
     """
     Do binary categorical-continuous association testing of binary categorical variables with continuous variables.
     As the binary categorical variables can be seen as a special case of the categorical variables, this function
@@ -143,28 +143,28 @@ def nanpy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.Data
     done_test_t, done_test_a, done_test_m, done_test_k = None, None, None, None
 
     if test in ['all', 't-test']:
-        two_cont_out_t = nanpy.ttest(cat_phenotypes_two, cont_phenotypes, axis=1,
+        two_cont_out_t = napy.ttest(cat_phenotypes_two, cont_phenotypes, axis=1,
                                      threads=num_workers, nan_value=nan_value)
         done_test_t = "ttest"
     if test in ['all', 'anova']:
-        two_cont_out_a = nanpy.anova(cat_phenotypes_two, cont_phenotypes, axis=1,
+        two_cont_out_a = napy.anova(cat_phenotypes_two, cont_phenotypes, axis=1,
                                      threads=num_workers, nan_value=nan_value)
         done_test_a = "anova"
 
     if test in ['all', 'mann-whitney u']:
-        two_cont_out_m = nanpy.mwu(cat_phenotypes_two, cont_phenotypes, axis=1, threads=num_workers,
+        two_cont_out_m = napy.mwu(cat_phenotypes_two, cont_phenotypes, axis=1, threads=num_workers,
                                    nan_value=nan_value)
         done_test_m = "mwu"
 
     if test in ['all', 'kruskal-wallis']:
-        two_cont_out_k = nanpy.kruskal_wallis(cat_phenotypes_two, cont_phenotypes, axis=1, threads=num_workers,
+        two_cont_out_k = napy.kruskal_wallis(cat_phenotypes_two, cont_phenotypes, axis=1, threads=num_workers,
                                               nan_value=nan_value)
         done_test_k = "kruskal"
 
-    results = [_nanpy_formatting(two_cont_out_t, [cat_cols_two, cont_cols], done_test_t),
-               _nanpy_formatting(two_cont_out_a, [cat_cols_two, cont_cols], done_test_a),
-               _nanpy_formatting(two_cont_out_m, [cat_cols_two, cont_cols], done_test_m),
-               _nanpy_formatting(two_cont_out_k, [cat_cols_two, cont_cols], done_test_k)]
+    results = [_napy_formatting(two_cont_out_t, [cat_cols_two, cont_cols], done_test_t),
+               _napy_formatting(two_cont_out_a, [cat_cols_two, cont_cols], done_test_a),
+               _napy_formatting(two_cont_out_m, [cat_cols_two, cont_cols], done_test_m),
+               _napy_formatting(two_cont_out_k, [cat_cols_two, cont_cols], done_test_k)]
     
     # Special case: variables with only one category
     cat_phenotypes_one = cat_phenotypes.loc[:, cat_phenotypes.nunique() <= 1].copy()
@@ -220,7 +220,7 @@ def nanpy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.Data
     return results_final
 
 
-def nanpy_cont_cont(cont_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
+def napy_cont_cont(cont_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
     if cont_phenotypes.shape[1] < 2:
         return [None, None]
     cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
@@ -228,16 +228,16 @@ def nanpy_cont_cont(cont_phenotypes: pd.DataFrame, test: str, num_workers=8, nan
     test_p, test_s = None, None
 
     if test in ['all', 'pearson']:
-        cont_out_p = nanpy.pearsonr(cont_phenotypes, nan_value=nan_value, threads=num_workers,
+        cont_out_p = napy.pearsonr(cont_phenotypes, nan_value=nan_value, threads=num_workers,
                                     axis=1)
         test_p = "pearson"
 
     if test in ['all', 'spearman']:
-        cont_out_s = nanpy.spearmanr(cont_phenotypes, threads=num_workers, nan_value=nan_value,
+        cont_out_s = napy.spearmanr(cont_phenotypes, threads=num_workers, nan_value=nan_value,
                                      axis=1)
         test_s = "spearman"
-    return [_nanpy_formatting(cont_out_p, [cont_cols], test_p),
-            _nanpy_formatting(cont_out_s, [cont_cols], test_s)]
+    return [_napy_formatting(cont_out_p, [cont_cols], test_p),
+            _napy_formatting(cont_out_s, [cont_cols], test_s)]
 
 
 def _order_categories(data: pd.DataFrame):
@@ -290,17 +290,17 @@ def calculate_association_scores(cat_data, cont_data, tests, num_workers=1, nan_
 
     # Continuous-Categorical association testing
     # TODO: enable cat_cont testing (add dummy vars as for other tests before re-enabling!)
-    #cat_cont_more = nanpy_cat_cont(cont_data, cat_data, tests.get('catContM'))
+    #cat_cont_more = napy_cat_cont(cont_data, cat_data, tests.get('catContM'))
     #logging.info("Finished continuous-categorical score creation")
     cat_cont_more = pd.DataFrame()
 
-    cat_cont_two = nanpy_binary_cat_cont(cont_data, cat_data, test=tests.get('catContB'), num_workers=num_workers, nan_value=nan_value)
+    cat_cont_two = napy_binary_cat_cont(cont_data, cat_data, test=tests.get('catContB'), num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-binary score creation")
     
-    cat_cat_results = nanpy_cat_cat(cat_data, num_workers=num_workers, nan_value=nan_value)
+    cat_cat_results = napy_cat_cat(cat_data, num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished categorical-categorical score creation")
     
-    cont_cont_results = nanpy_cont_cont(cont_data, test=tests.get('contCont'), num_workers=num_workers, nan_value=nan_value)
+    cont_cont_results = napy_cont_cont(cont_data, test=tests.get('contCont'), num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-continuous score creation")
 
     scores = _combine_tests(cat_cat_results, cont_cont_results, cat_cont_two, cat_cont_more)
