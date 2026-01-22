@@ -216,9 +216,13 @@ def min_max_rescaling(scores1, scores2=None, metric='pre-E'):
 
         return scores1, scores2
 
-    elif metric == 'post-E':
+    elif metric in ['post-E', 'post-LS']:
         # In this case scores1 is the differential data and scores2 is not needed
-        metric_raw = 'raw-E'
+        if metric == 'post-LS':
+            metric_raw = 'raw-LS'
+        else:
+            metric_raw = 'raw-E'
+
         scores1[metric] = np.nan
 
         # Perform rescaling for every test type separately
@@ -241,7 +245,7 @@ def min_max_rescaling(scores1, scores2=None, metric='pre-E'):
         return scores1, None
 
     else:
-        raise ValueError(f"Invalid metric '{metric}'. Only 'pre-E', 'adj-P' and 'post-E' are supported.")
+        raise ValueError(f"Invalid metric '{metric}'. Only 'pre-E', 'adj-P', 'post-E' and 'post-LS' are supported.")
 
 
 # Adjusted DrDimont implementation to compute integrated interaction scores
