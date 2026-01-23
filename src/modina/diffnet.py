@@ -11,7 +11,7 @@ from modina.statistics_utils import *
 # Wrapper function to perform the whole moDiNA pipeline
 def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'pre-LS', node_metric: str = 'STC', ranking_alg: str = 'PageRank+',
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
-                     stc_test: str = 'non-parametric', max_path_length: int=2, dc_metric: str = 'adj-P', 
+                     stc_test: str = 'mwu', max_path_length: int=2, dc_metric: str = 'adj-P', 
                      cont_cont: str = 'spearman', cat_cat: str = 'chi2', bi_cont: str = 'mann-whitney u', cont_cat: str = 'kruskal-wallis',
                      correction: str = 'bh', nan_value: int = -89, num_workers: int=1,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, pd.DataFrame, pd.DataFrame, dict]:
@@ -34,7 +34,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param filter_rule: Rule to integrate the networks during filtering. Defaults to None.
     :param edge_metric: Edge metric used to construct the differential network. Defaults to 'pre-LS'.
     :param node_metric: Node metric used to construct the differential network. Defaults to 'STC'.
-    :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'non-parametric'.
+    :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
     :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'adj-P'.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'. Defaults to 'PageRank+'.
@@ -56,7 +56,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         scores2_path = None
         ranking_path = None        
 
-    # Score calculation and rescaling
+    # Score calculation
     logging.info('Computing association scores...')
     scores1 = compute_context_scores(context_data=context1, meta_file=meta_file, cont_cont=cont_cont, cat_cat=cat_cat,
                                      bi_cont=bi_cont, cont_cat=cont_cat, correction=correction, nan_value=nan_value,
@@ -64,10 +64,6 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     scores2 = compute_context_scores(context_data=context2, meta_file=meta_file, cont_cont=cont_cont, cat_cat=cat_cat,
                                      bi_cont=bi_cont, cont_cat=cont_cat, correction=correction, nan_value=nan_value,
                                      num_workers=num_workers, path=scores2_path)
-
-    scores1, scores2 = min_max_rescaling(scores1=scores1, scores2=scores2, metric='adj-P')
-    scores1, scores2 = min_max_rescaling(scores1=scores1, scores2=scores2, metric='pre-E')
-    assert scores2 is not None, "Scores2 should not be None after rescaling."
     logging.info('Done.')
 
     # Filtering
@@ -227,7 +223,6 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     # Rescaling
     scores1, scores2 = min_max_rescaling(scores1=scores1, scores2=scores2, metric='adj-P')
     scores1, scores2 = min_max_rescaling(scores1=scores1, scores2=scores2, metric='pre-E')
-    assert scores2 is not None, "Scores2 should not be None after rescaling."
     
     # Check input parameters
     if filter_method is None:
@@ -351,7 +346,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
 # Differential network computation
 def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
                          edge_metric: str = 'pre-LS', node_metric: str = 'STC',
-                         stc_test: str = 'non-parametric', max_path_length: int = 2, correction: str = 'bh', dc_metric: str = 'adj-P',
+                         stc_test: str = 'mwu', max_path_length: int = 2, correction: str = 'bh', dc_metric: str = 'adj-P',
                          path: Optional[str] = None, format: str = 'csv') -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Computation of a differential network defined by a node metric and an edge metric.
@@ -362,7 +357,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param context2: Observed data of Context 2, potentially filtered.
     :param edge_metric: Edge metric used to construct the differential network. Defaults to 'pre-LS'.
     :param node_metric: Node metric used to construct the differential network. Defaults to 'STC'.
-    :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'non-parametric'.
+    :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'adj-P'.
@@ -604,7 +599,7 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
 
 # Differential node computation
 def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
-                        node_metric: str, correction: str = 'bh', stc_test: str = 'non-parametric', dc_metric: str = 'adj-P') -> pd.DataFrame:
+                        node_metric: str, correction: str = 'bh', stc_test: str = 'mwu', dc_metric: str = 'adj-P') -> pd.DataFrame:
     """
     Compute differential node scores based on the specified node metric.
 
@@ -614,7 +609,7 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
     :param context2: Observed data of Context 2, potentially filtered.
     :param node_metric: Node metric to compute the differential node scores.
     :param correction: Correction method for multiple testing. Only needed if node_metric is 'STC'. Defaults to 'bh'.
-    :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'non-parametric'.
+    :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'adj-P'.
     :return: A DataFrame containing the computed differential node scores.
     """

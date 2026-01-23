@@ -27,7 +27,7 @@ def subtract_edges(scores1, scores2, metrics, included_cols=None):
 
 
 # Compute absolute mean difference and statistical significance for each node between two contexts
-def subtract_nodes(context1, context2, test=True, test_type='parametric', correction='bh'):
+def subtract_nodes(context1, context2, test=True, test_type='ttest', correction='bh'):
     if not context1.columns.equals(context2.columns):
         raise ValueError('Context a and b need to have the same structure.')
     
@@ -40,10 +40,12 @@ def subtract_nodes(context1, context2, test=True, test_type='parametric', correc
     # Perform statistical test if specified
     if test is True:
         for node in nodes:
-            if test_type == 'parametric':
+            if test_type == 'ttest':
                 result = sc.ttest_ind(context1[node], context2[node], nan_policy='omit')
-            else:
+            elif test_type == 'mwu':
                 result = sc.mannwhitneyu(context1[node], context2[node], nan_policy='omit')
+            else:
+                raise ValueError(f"Invalid test_type '{test_type}'. Choose from 'ttest' or 'mwu'.")
             
             nodes_diff.loc[node, 'test_p'] = result.pvalue
         
