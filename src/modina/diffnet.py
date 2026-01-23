@@ -11,7 +11,7 @@ from modina.statistics_utils import *
 # Wrapper function to perform the whole moDiNA pipeline
 def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'pre-LS', node_metric: str = 'STC', ranking_alg: str = 'PageRank+',
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
-                     stc_test: str = 'mwu', max_path_length: int=2, dc_metric: str = 'adj-P', 
+                     stc_test: str = 'mwu', max_path_length: int=2, dc_metric: str = 'pre-P', 
                      cont_cont: str = 'spearman', cat_cat: str = 'chi2', bi_cont: str = 'mann-whitney u', cont_cat: str = 'kruskal-wallis',
                      correction: str = 'bh', nan_value: int = -89, num_workers: int=1,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, pd.DataFrame, pd.DataFrame, dict]:
@@ -36,7 +36,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param node_metric: Node metric used to construct the differential network. Defaults to 'STC'.
     :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
-    :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'adj-P'.
+    :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'pre-P'.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'. Defaults to 'PageRank+'.
     :param name1: Name of Context 1. Used for saving files. Defaults to 'context1'.
     :param name2: Name of Context 2. Used for saving files. Defaults to 'context2'.
@@ -221,8 +221,8 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         raise ValueError('scores1 and scores2 need to have the same structure and order of edges.')
     
     # Rescaling
-    scores1, scores2 = min_max_rescaling(scores1=scores1, scores2=scores2, metric='adj-P')
-    scores1, scores2 = min_max_rescaling(scores1=scores1, scores2=scores2, metric='pre-E')
+    scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-P')
+    scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-E')
     
     # Check input parameters
     if filter_method is None:
@@ -238,7 +238,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         raise ValueError("Please provide a 'filter_param'.")
 
     # Set sorting order based on filter metric
-    ascending = True if filter_metric == 'adj-P' else False
+    ascending = True if filter_metric == 'pre-P' else False
 
     # Compute filtering threshold according to the specified method
     threshold1 = None
@@ -301,7 +301,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
 
         fill_values = {
             'raw-P': 1.0,
-            'adj-P': 1.0,
+            'pre-P': 1.0,
             'raw-E': 0.0,
             'pre-E': 0.0,
         }
@@ -346,7 +346,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
 # Differential network computation
 def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
                          edge_metric: str = 'pre-LS', node_metric: str = 'STC',
-                         stc_test: str = 'mwu', max_path_length: int = 2, correction: str = 'bh', dc_metric: str = 'adj-P',
+                         stc_test: str = 'mwu', max_path_length: int = 2, correction: str = 'bh', dc_metric: str = 'pre-P',
                          path: Optional[str] = None, format: str = 'csv') -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Computation of a differential network defined by a node metric and an edge metric.
@@ -360,7 +360,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
-    :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'adj-P'.
+    :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'pre-P'.
     :param path: Optional path to save the differential scores as CSV files. Defaults to None.
     :param format: File format to save the differential network. Options are 'csv' and 'graphml'. Defaults to 'csv'.
     :return: A tuple (edges_diff, nodes_diff) containing the computed differential edges and nodes.
@@ -368,9 +368,9 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
 
     # Rescaling
     if not 'pre-E' in scores1.columns or not 'pre-E' in scores2.columns:
-        scores1, scores2 = min_max_rescaling(scores1=scores1, scores2=scores2, metric='pre-E') 
-    if not 'adj-P' in scores1.columns or not 'adj-P' in scores2.columns:
-        scores1, scores2 = min_max_rescaling(scores1=scores1, scores2=scores2, metric='adj-P')
+        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-E') 
+    if not 'pre-P' in scores1.columns or not 'pre-P' in scores2.columns:
+        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-P')
 
     # Edges
     edges_diff = _compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, max_path_length=max_path_length)
@@ -479,7 +479,7 @@ def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_
 
 
 # Differential edge computation
-def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric: str, max_path_length: int = 2) -> pd.DataFrame:
+def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric: str = 'pre-P', max_path_length: int = 2) -> pd.DataFrame:
     """
     Compute differential edge scores based on the specified edge metric.
 
@@ -494,38 +494,44 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
 
     if edge_metric is None:
         # TODO: rethink this warning, maybe moDiNA should also run without computing an edge metric
-        logging.warning('No edge_metric was specified. This setting should only be applied for direct node rankings. Adj-P will now be computed to enable other rankings.')
-        # Take adj-P per default
+        logging.warning('No edge_metric was specified. This setting should only be applied for direct node rankings. pre-P will now be computed to enable other rankings.')
+        # Take pre-P per default
         edges_diff = subtract_edges(scores1, scores2,
-                                            metrics=['adj-P'], included_cols=('test_type',))
+                                            metrics=['pre-P'], included_cols=('test_type',))
 
-    # Pre-rescaled effect size (pre-E) or rescaled multiple-testing adjusted p-value (adj-P)
-    if edge_metric == 'adj-P' or edge_metric == 'pre-E':
+    # Pre-rescaled effect size (pre-E) or rescaled multiple-testing adjusted p-value (pre-P)
+    if edge_metric == 'pre-P' or edge_metric == 'pre-E':
         pass
+    
+    # Post-rescaled p-value (post-P)
+    elif edge_metric == 'post-P':
+        # Compute differences in edge metrics first
+        edges_diff = subtract_edges(scores1, scores2, metrics=['raw-P'], included_cols=['test_type'])
+        # Min-Max rescaling
+        edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
 
     # Post-rescaled effect size (post-E)
     elif edge_metric == 'post-E':
         # Compute differences in edge metrics first
-        edges_diff = subtract_edges(scores1, scores2,
-                                            metrics=['raw-E'], included_cols=['test_type'])
+        edges_diff = subtract_edges(scores1, scores2, metrics=['raw-E'], included_cols=['test_type'])
         # Min-Max rescaling
-        edges_diff, _ = min_max_rescaling(scores1=edges_diff, metric=edge_metric)
+        edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
 
     # Pre-rescaled combined score (pre-CS)
     elif edge_metric == 'pre-CS':
         # Compute combined score from rescaled effect size and p-value
-        scores1[edge_metric] = scores1['pre-E'] - scores1['adj-P']
-        scores2[edge_metric] = scores2['pre-E'] - scores2['adj-P']
+        scores1[edge_metric] = scores1['pre-E'] - scores1['pre-P']
+        scores2[edge_metric] = scores2['pre-E'] - scores2['pre-P']
 
     # Post-rescaled combined score (post-CS)
     elif edge_metric == 'post-CS':
         # Compute differences in edge metrics first
-        edges_diff = subtract_edges(scores1, scores2,
-                                            metrics=['adj-P', 'raw-E'], included_cols=['test_type'])
+        edges_diff = subtract_edges(scores1, scores2, metrics=['raw-P', 'raw-E'], included_cols=['test_type'])
         # Rescale difference in effect sizes
-        edges_diff, _ = min_max_rescaling(scores1=edges_diff, metric='post-E')
+        edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric='post-E')
+        edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric='post-P')
         # Compute combined score
-        edges_diff[edge_metric] = (edges_diff['post-E'] + edges_diff['adj-P'])
+        edges_diff[edge_metric] = (edges_diff['post-E'] + edges_diff['post-P'])
 
     # Integrated Interaction Score (int-IS)
     elif edge_metric == 'int-IS':
@@ -533,20 +539,20 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
         scores1 = calculate_interaction_score(scores1, metric='pre-E', max_path_length=max_path_length)
         scores2 = calculate_interaction_score(scores2, metric='pre-E', max_path_length=max_path_length)
     
-    # Log-transformed p-value and pre-rescaled effect size combined score
+    # Log-transformed p-value and pre-rescaled effect size combined score (pre-LS)
     elif edge_metric == 'pre-LS':
         # Replace zero values by small epsilon (1/10 of the minimum non-zero value)
-        p_vals_combined = np.concatenate([scores1[scores1['adj-P'] > 0]['adj-P'].to_numpy(), 
-                                            scores2[scores2['adj-P'] > 0]['adj-P'].to_numpy()])
+        p_vals_combined = np.concatenate([scores1[scores1['pre-P'] > 0]['pre-P'].to_numpy(), 
+                                            scores2[scores2['pre-P'] > 0]['pre-P'].to_numpy()])
         min_non_zero = p_vals_combined.min()
         epsilon = min_non_zero / 10.0
 
-        p_vals1 = scores1['adj-P'].to_numpy()
-        p_vals2 = scores2['adj-P'].to_numpy()
+        p_vals1 = scores1['pre-P'].to_numpy()
+        p_vals2 = scores2['pre-P'].to_numpy()
         p_vals1 = np.where(p_vals1 == 0, epsilon, p_vals1)
         p_vals2 = np.where(p_vals2 == 0, epsilon, p_vals2)
 
-        # - log10(adj-P) * pre-E
+        # - log10(pre-P) * pre-E
         values1 = - np.log10(p_vals1) * scores1['pre-E']
         values2 = - np.log10(p_vals2) * scores2['pre-E']
 
@@ -557,7 +563,7 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
         scores1[edge_metric] = values1
         scores2[edge_metric] = values2
 
-    # Post rescaled absolute difference in (log-transformed raw p-value multiplied by raw effect size)
+    # Post rescaled absolute difference in (log-transformed raw p-value multiplied by raw effect size) (post-LS)
     elif edge_metric == 'post-LS':
         # Replace zero values by small epsilon (1/10 of the minimum non-zero value)
         p_vals_combined = np.concatenate([scores1[scores1['raw-P'] > 0]['raw-P'].to_numpy(), 
@@ -585,10 +591,10 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
         edges_diff = subtract_edges(scores1, scores2,
                                     metrics=['raw-LS'], included_cols=['test_type'])
         # Min-Max rescaling
-        edges_diff, _ = min_max_rescaling(scores1=edges_diff, metric=edge_metric)
+        edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
 
     else:
-        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'adj-P', 'pre-E', 'post-E', 'int-IS', 'pre-CS', 'post-CS', 'pre-LS' or 'post-LS'.")
+        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'pre-P', 'pre-E', 'post-E', 'int-IS', 'pre-CS', 'post-CS', 'pre-LS' or 'post-LS'.")
 
     if edges_diff is None:
         # Compute difference in edge scores
@@ -599,7 +605,7 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
 
 # Differential node computation
 def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
-                        node_metric: str, correction: str = 'bh', stc_test: str = 'mwu', dc_metric: str = 'adj-P') -> pd.DataFrame:
+                        node_metric: str, correction: str = 'bh', stc_test: str = 'mwu', dc_metric: str = 'pre-P') -> pd.DataFrame:
     """
     Compute differential node scores based on the specified node metric.
 
@@ -610,7 +616,7 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
     :param node_metric: Node metric to compute the differential node scores.
     :param correction: Correction method for multiple testing. Only needed if node_metric is 'STC'. Defaults to 'bh'.
     :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
-    :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'adj-P'.
+    :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'pre-P'.
     :return: A DataFrame containing the computed differential node scores.
     """
 
@@ -640,10 +646,10 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
         
         nodes_diff['DC-STC'] = nodes_diff['DC'] - nodes_diff['STC'] + 1.0        
     
-    # Weighted degree centrality based on adj-P (WDC-P)
+    # Weighted degree centrality based on pre-P (WDC-P)
     elif node_metric == 'WDC-P':
         nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
-        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, metric='adj-P', weighted=True,
+        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, metric='pre-P', weighted=True,
                                                         scores1=scores1, scores2=scores2)
 
     # Weighted degree centrality based on pre-E (WDC-E)
@@ -656,7 +662,7 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
     elif node_metric == 'PRC':
         nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
 
-        # TODO: allow 'adj-P' metric for PRC (don't forget to invert)
+        # TODO: allow 'pre-P' metric for PRC (don't forget to invert)
 
         nodes_diff = calculate_pagerank_centrality(nodes_diff=nodes_diff, metric='pre-E', invert=False,
                                                             scores1=scores1, scores2=scores2)

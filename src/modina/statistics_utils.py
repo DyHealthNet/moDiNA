@@ -57,12 +57,12 @@ def subtract_nodes(context1, context2, test=True, test_type='ttest', correction=
 
 # --- Node and edge metrics ---
 # Calculate differential (weighted) degree centralities
-def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='adj-P', weighted=False):
+def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='pre-P', weighted=False):
     if weighted:
-        if metric == 'adj-P':
-            scores1['adj-P_inverted'] = 1 - scores1[metric]
-            scores2['adj-P_inverted'] = 1 - scores2[metric]
-            metric = 'adj-P_inverted'
+        if metric == 'pre-P':
+            scores1['pre-P_inverted'] = 1 - scores1[metric]
+            scores2['pre-P_inverted'] = 1 - scores2[metric]
+            metric = 'pre-P_inverted'
             method = 'WDC-P'
         elif metric == 'pre-E':
             method = 'WDC-E' 
@@ -103,7 +103,7 @@ def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='adj-P', we
 
             for i in scores1.index:
                 if (scores1.loc[i, 'label1'] == node) or (scores1.loc[i, 'label2'] == node):
-                    if metric == 'adj-P':
+                    if metric == 'pre-P':
                         if scores1.loc[i, metric] != 1:
                             count1 += 1
                     elif metric == 'pre-E':
@@ -114,7 +114,7 @@ def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='adj-P', we
 
             for i in scores2.index:
                 if (scores2.loc[i, 'label1'] == node) or (scores2.loc[i, 'label2'] == node):
-                    if metric == 'adj-P':
+                    if metric == 'pre-P':
                         if scores2.loc[i, metric] != 1:
                             count2 += 1
                     elif metric == 'pre-E':
@@ -173,82 +173,82 @@ def calculate_pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E', 
     return nodes_diff
 
 
-# Min-Max rescaling to [0, 1]
-# TODO: separate into pre and post rescaling functions
-def min_max_rescaling(scores1, scores2=None, metric='pre-E'):
+# Pre-rescaling
+def pre_rescaling(scores1, scores2, metric):
     scores1 = scores1.copy()
-    if scores2 is not None:
-        scores2 = scores2.copy()
+    scores2 = scores2.copy()
 
-    if metric in ['pre-E', 'adj-P']:
-        if scores1 is None or scores2 is None:
-            raise ValueError('Scores 1 and 2 must be provided to rescale raw-E or raw-P.')
-
-        # Get raw metrics
-        if metric == 'pre-E':
-            metric_raw = 'raw-E'
-        elif metric == 'adj-P':
-            metric_raw = 'raw-P'
-        else:
-            raise ValueError(f"Invalid metric {metric}. Choose from 'pre-E' or 'adj-P'.")
-
-        # Consider both contexts at the same time to make them comparable
-        scores1[metric] = np.nan
-        scores2[metric] = np.nan
-
-        # Perform rescaling for every test type separately
-        test_types = np.unique(scores1['test_type'])
-        for test in test_types:
-            scores1_filtered = scores1[scores1['test_type'] == test]
-            scores2_filtered = scores2[scores2['test_type'] == test]
-            values = np.concatenate([scores1_filtered[metric_raw].to_numpy(), scores2_filtered[metric_raw].to_numpy()])
-
-            # Min-Max normalization
-            min = np.min(values)
-            max = np.max(values)
-
-            if min == max:
-                rescaled1 = 0
-                rescaled2 = 0
-            else:
-                rescaled1 = (scores1_filtered[metric_raw] - min) / (max - min)
-                rescaled2 = (scores2_filtered[metric_raw] - min) / (max - min)
-
-            scores1.loc[scores1['test_type'] == test, metric] = rescaled1
-            scores2.loc[scores2['test_type'] == test, metric] = rescaled2
-
-        return scores1, scores2
-
-    elif metric in ['post-E', 'post-LS']:
-        # In this case scores1 is the differential data and scores2 is not needed
-        if metric == 'post-LS':
-            metric_raw = 'raw-LS'
-        else:
-            metric_raw = 'raw-E'
-
-        scores1[metric] = np.nan
-
-        # Perform rescaling for every test type separately
-        test_types = np.unique(scores1['test_type'])
-        for test in test_types:
-            scores1_filtered = scores1[scores1['test_type'] == test]
-            values = scores1_filtered[metric_raw].to_numpy()
-
-            # Min-Max normalization
-            min = np.min(values)
-            max = np.max(values)
-
-            if min == max:
-                rescaled = 0
-            else:
-                rescaled = (scores1_filtered[metric_raw] - min) / (max - min)
-
-            scores1.loc[scores1['test_type'] == test, metric] = rescaled
-
-        return scores1, pd.DataFrame()
-
+    # Get raw metrics
+    if metric == 'pre-E':
+        metric_raw = 'raw-E'
+    elif metric == 'pre-P':
+        metric_raw = 'raw-P'
     else:
-        raise ValueError(f"Invalid metric '{metric}'. Only 'pre-E', 'adj-P', 'post-E' and 'post-LS' are supported.")
+        raise ValueError(f"Invalid metric {metric}. Only 'pre-E' and 'pre-P' are supported.")
+    
+    # Consider both contexts at the same time to make them comparable
+    scores1[metric] = np.nan
+    scores2[metric] = np.nan
+
+    # Perform rescaling for every test type separately
+    if not scores1['test_type'].equals(scores2['test_type']):
+        raise ValueError("scores1 and scores2 must have identical 'test_type' columns.")
+    test_types = np.unique(scores1['test_type'])
+    for test in test_types:
+        scores1_filtered = scores1[scores1['test_type'] == test]
+        scores2_filtered = scores2[scores2['test_type'] == test]
+        values = np.concatenate([scores1_filtered[metric_raw].to_numpy(), scores2_filtered[metric_raw].to_numpy()])
+
+        # Min-Max normalization
+        min_val = np.min(values)
+        max_val = np.max(values)
+
+        if min_val == max_val:
+            rescaled1 = 0
+            rescaled2 = 0
+        else:
+            rescaled1 = (scores1_filtered[metric_raw] - min_val) / (max_val - min_val)
+            rescaled2 = (scores2_filtered[metric_raw] - min_val) / (max_val - min_val)
+
+        scores1.loc[scores1['test_type'] == test, metric] = rescaled1
+        scores2.loc[scores2['test_type'] == test, metric] = rescaled2
+
+    return scores1, scores2
+    
+
+# Post-rescaling
+def post_rescaling(diff_scores, metric):
+    diff_scores = diff_scores.copy()
+
+    if metric == 'post-LS':
+        metric_raw = 'raw-LS'
+    elif metric == 'post-E':
+        metric_raw = 'raw-E'
+    elif metric == 'post-P':
+        metric_raw = 'raw-P'
+    else:
+        raise ValueError(f"Invalid metric '{metric}'. Only 'post-E', 'post-P' and 'post-LS' are supported.")
+    
+    diff_scores[metric] = np.nan
+
+    # Perform rescaling for every test type separately
+    test_types = np.unique(diff_scores['test_type'])
+    for test in test_types:
+        diff_scores_filtered = diff_scores[diff_scores['test_type'] == test]
+        values = diff_scores_filtered[metric_raw].to_numpy()
+
+        # Min-Max normalization
+        min_val = np.min(values)
+        max_val = np.max(values)
+
+        if min_val == max_val:
+            rescaled = 0
+        else:
+            rescaled = (diff_scores_filtered[metric_raw] - min_val) / (max_val - min_val)
+
+        diff_scores.loc[diff_scores['test_type'] == test, metric] = rescaled
+
+    return diff_scores
 
 
 # Adjusted DrDimont implementation to compute integrated interaction scores
