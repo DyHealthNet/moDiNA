@@ -1,4 +1,4 @@
-# Copied and modified from https://github.com/DyHealthNet/DHN-backend.git
+# Adapted from https://github.com/DyHealthNet/DHN-backend.git
 
 import numpy as np
 import pandas as pd
@@ -75,15 +75,19 @@ def _combine_tests(cat_cat, cont_cont, bi_cont, cont_cat) -> pd.DataFrame:
         all_results.append(merged)
 
     out = pd.concat(all_results, ignore_index=True)
+    out = out.sort_values(by=['label1', 'label2'], kind='mergesort').reset_index(drop=True)
 
     return out
 
 
-def napy_cat_cat(cat_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
-    cat_phenotypes, cols = _df_to_numpy(cat_phenotypes)
-    if cat_phenotypes.shape[1] < 2:
+def napy_cat_cat(cat_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
+    # Combine categorical and binary phenotypes for chi-squared test
+    discrete_phenotypes = pd.concat([cat_phenotypes, bi_phenotypes], axis=1)
+    discrete_phenotypes, cols = _df_to_numpy(discrete_phenotypes)
+    if discrete_phenotypes.shape[1] < 2:
         return [None]
-    output = napy.chi_squared(cat_phenotypes, axis=1, threads=num_workers, nan_value=nan_value, use_numba=False)
+    
+    output = napy.chi_squared(discrete_phenotypes, axis=1, threads=num_workers, nan_value=nan_value, use_numba=False)
     results = _napy_formatting(output, [cols], 'chi2')
 
     for col in results.columns:
@@ -95,87 +99,90 @@ def napy_cat_cat(cat_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
     return [results]
 
 
-def napy_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, tests: str, num_workers=8, nan_value=-89):
-    # split cat_phenotypes into two dataframes, one with columns that contain only two unique values and one with more
-    # than two unique values
+def napy_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
     if cat_phenotypes.shape[1] < 2:
         return [None, None]
-    cat_phenotypes_more = cat_phenotypes.loc[:, cat_phenotypes.nunique() > 2].copy()
 
     cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
-    cat_phenotypes_more, cat_cols_more = _df_to_numpy(cat_phenotypes_more)
-    # this is just to shut the IDE up
-    more_cont_out_a, more_cont_out_k = None, None
-    done_test_a, done_test_k = None, None
+    cat_phenotypes, cat_cols = _df_to_numpy(cat_phenotypes)
+    
+    cont_out = None
+    done_test = None
 
-    if tests in ['all', 'anova']:
-        more_cont_out_a = napy.anova(cat_phenotypes_more, cont_phenotypes, axis=1,
+    if test == 'anova':
+        cont_out = napy.anova(cat_phenotypes, cont_phenotypes, axis=1,
                                       threads=num_workers, nan_value=nan_value)
-        done_test_a = "anova"
+        done_test = "anova"
 
-    if tests in ['all', 'kruskal-wallis']:
-        more_cont_out_k = napy.kruskal_wallis(cat_phenotypes_more, cont_phenotypes, axis=1,
+    elif test == 'kruskal':
+        cont_out = napy.kruskal_wallis(cat_phenotypes, cont_phenotypes, axis=1,
                                                threads=num_workers, nan_value=nan_value)
-        done_test_k = "kruskal"
+        done_test = "kruskal"
 
-    return [_napy_formatting(more_cont_out_a, [cat_cols_more, cont_cols], done_test_a),
-            _napy_formatting(more_cont_out_k, [cat_cols_more, cont_cols], done_test_k)]
+    else:
+        raise ValueError(f"Test '{test}' not recognized for categorical-continuous association testing.")   
+
+    return [_napy_formatting(cont_out, [cat_cols, cont_cols], done_test)]
 
 
-def napy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
+def napy_binary_cat_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
     """
     Do binary categorical-continuous association testing of binary categorical variables with continuous variables.
     As the binary categorical variables can be seen as a special case of the categorical variables, this function
     allows for the same tests as the categorical-continuous association testing. In addition, it also allows for
     tests specific to binary categorical variables.
     :param cont_phenotypes: DataFrame with continuous variables
-    :param cat_phenotypes: DataFrame with binary categorical variables
+    :param bi_phenotypes: DataFrame with binary categorical variables
     :param test: the test to perform
     :return: DataFrame with the results of the association testing
     """
-    if cat_phenotypes.shape[1] < 2:
+    if bi_phenotypes.shape[1] < 2:
         return [None, None, None, None]
-    cat_phenotypes_two = cat_phenotypes.loc[:, cat_phenotypes.nunique() == 2].copy()
+    
+    if (bi_phenotypes.nunique() > 2).any():
+        raise ValueError("All binary categorical variables cannot have more than two unique values.")
+    
     cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
-    cat_phenotypes_two, cat_cols_two = _df_to_numpy(cat_phenotypes_two)
+    bi_phenotypes_two, bi_cols = _df_to_numpy(bi_phenotypes)
 
-    two_cont_out_t, two_cont_out_a, two_cont_out_m, two_cont_out_k = None, None, None, None
-    done_test_t, done_test_a, done_test_m, done_test_k = None, None, None, None
+    bi_cont_out = None
+    done_test = None
 
-    if test in ['all', 't-test']:
-        two_cont_out_t = napy.ttest(cat_phenotypes_two, cont_phenotypes, axis=1,
+    if test == 'ttest':
+        bi_cont_out = napy.ttest(bi_phenotypes_two, cont_phenotypes, axis=1,
                                      threads=num_workers, nan_value=nan_value)
-        done_test_t = "ttest"
-    if test in ['all', 'anova']:
-        two_cont_out_a = napy.anova(cat_phenotypes_two, cont_phenotypes, axis=1,
-                                     threads=num_workers, nan_value=nan_value)
-        done_test_a = "anova"
+        done_test = "ttest"
 
-    if test in ['all', 'mann-whitney u']:
-        two_cont_out_m = napy.mwu(cat_phenotypes_two, cont_phenotypes, axis=1, threads=num_workers,
+    elif test == 'anova':
+        bi_cont_out = napy.anova(bi_phenotypes_two, cont_phenotypes, axis=1,
+                                     threads=num_workers, nan_value=nan_value)
+        done_test = "anova"
+
+    elif test == 'mwu':
+        bi_cont_out = napy.mwu(bi_phenotypes_two, cont_phenotypes, axis=1, threads=num_workers,
                                    nan_value=nan_value)
-        done_test_m = "mwu"
+        done_test = "mwu"
 
-    if test in ['all', 'kruskal-wallis']:
-        two_cont_out_k = napy.kruskal_wallis(cat_phenotypes_two, cont_phenotypes, axis=1, threads=num_workers,
+    elif test == 'kruskal':
+        bi_cont_out = napy.kruskal_wallis(bi_phenotypes_two, cont_phenotypes, axis=1, threads=num_workers,
                                               nan_value=nan_value)
-        done_test_k = "kruskal"
+        done_test = "kruskal"
 
-    results = [_napy_formatting(two_cont_out_t, [cat_cols_two, cont_cols], done_test_t),
-               _napy_formatting(two_cont_out_a, [cat_cols_two, cont_cols], done_test_a),
-               _napy_formatting(two_cont_out_m, [cat_cols_two, cont_cols], done_test_m),
-               _napy_formatting(two_cont_out_k, [cat_cols_two, cont_cols], done_test_k)]
+    else:
+        raise ValueError(f"Test '{test}' not recognized for binary categorical-continuous association testing.")
+
+    results = [_napy_formatting(bi_cont_out, [bi_cols, cont_cols], done_test)]
     
     # Special case: variables with only one category
-    cat_phenotypes_one = cat_phenotypes.loc[:, cat_phenotypes.nunique() <= 1].copy()
-    cat_phenotypes_one, cat_cols_one = _df_to_numpy(cat_phenotypes_one)
+    bi_phenotypes_one = bi_phenotypes.loc[:, bi_phenotypes.nunique() <= 1].copy()
+    bi_phenotypes_one, bi_cols_one = _df_to_numpy(bi_phenotypes_one)
     
-    if cat_phenotypes_one.shape[1] > 0:
+    if bi_phenotypes_one.shape[1] > 0:
         logging.warning(
-            f'There were categorical variables found with only one category: {cat_cols_one}. '
+            f'There were categorical variables found with only one category: {bi_cols_one}. '
             'These will be added as dummy rows with p-value 1.0 and effect size 0.0.')
 
-        # For each combination of cat_cols_one and cont_cols, add a row with p-value 1.0 and effect size 0.0
+        # For each combination of bi_cols_one and cont_cols, add a row with p-value 1.0 and effect size 0.0
         for i, df in enumerate(results):
             if df is None:
                 continue
@@ -184,11 +191,11 @@ def napy_binary_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataF
             e_cols = [col for col in df.columns if "_e_" in col]
 
             special_rows = []
-            for cat_var in cat_cols_one:
+            for bi_var in bi_cols_one:
                 for cont_var in cont_cols:
                     row = {
-                        'label1': cat_var,
-                        'label2': cont_var,
+                        'label1': bi_var,
+                        'label2': cont_var
                     }
                     for col in p_cols:
                         row[col] = 1.0
@@ -224,20 +231,23 @@ def napy_cont_cont(cont_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_
     if cont_phenotypes.shape[1] < 2:
         return [None, None]
     cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
-    cont_out_p, cont_out_s = None, None
-    test_p, test_s = None, None
+    cont_out = None
+    done_test = None
 
-    if test in ['all', 'pearson']:
-        cont_out_p = napy.pearsonr(cont_phenotypes, nan_value=nan_value, threads=num_workers,
+    if test == 'pearson':
+        cont_out = napy.pearsonr(cont_phenotypes, nan_value=nan_value, threads=num_workers,
                                     axis=1)
-        test_p = "pearson"
+        done_test = "pearson"
 
-    if test in ['all', 'spearman']:
-        cont_out_s = napy.spearmanr(cont_phenotypes, threads=num_workers, nan_value=nan_value,
+    elif test == 'spearman':
+        cont_out = napy.spearmanr(cont_phenotypes, threads=num_workers, nan_value=nan_value,
                                      axis=1)
-        test_s = "spearman"
-    return [_napy_formatting(cont_out_p, [cont_cols], test_p),
-            _napy_formatting(cont_out_s, [cont_cols], test_s)]
+        done_test = "spearman"
+
+    else:
+        raise ValueError(f"Test '{test}' not recognized for continuous-continuous association testing.")
+        
+    return [_napy_formatting(cont_out, [cont_cols], done_test)]
 
 
 def _order_categories(data: pd.DataFrame):
@@ -253,48 +263,48 @@ def _order_categories(data: pd.DataFrame):
     return data
 
 
-def separate_cat_cont(all_data, meta_file) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[None, None]:
+def separate_types(all_data, meta_file) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    We separate the categorical and continuous variables from the data. Any other input type is continuous.
+    Separating the data into categorical, binary and continuous variables.
     :param all_data: DataFrame with all data
-    :param phenotypes_meta: DataFrame with metadata of the variables
-    :return: tuple with the categorical and continuous phenotypes
+    :param meta_file: DataFrame with metadata of the variables
+    :return: tuple with the categorical, continuous and binary phenotypes
     """
-    if isinstance(all_data, type(None)):
-        return None, None
-    if isinstance(meta_file, type(None)):
-        return pd.DataFrame(), all_data.copy()
 
+    # Check if meta_file has an invalid type
+    if not meta_file['type'].str.lower().isin(['categorical', 'boolean', 'continuous']).all():
+        raise ValueError("Invalid type found in meta_file. Allowed types are 'categorical', 'boolean', and 'continuous'.")
+    
+    # Extract categorical phenotypes
     cat_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower()
-                                                      .isin(["categorical", "boolean"])].label)].copy()
-
+                                                                .isin(["categorical"])].label)].copy()
+    # Extract binary phenotypes
+    bi_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower()
+                                                               .isin(["boolean"])].label)].copy()
     # Extract continuous phenotypes
-    cont_data = all_data.iloc[:, ~all_data.columns.isin(meta_file[meta_file.type.str.lower()
-                                                        .isin(["categorical", "boolean", "time"])].label)].copy()
-    return cat_data, cont_data
+    cont_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower()
+                                                                  .isin(["continuous"])].label)].copy()
+    
+    return cat_data, cont_data, bi_data
 
 
-def calculate_association_scores(cat_data, cont_data, tests, num_workers=1, nan_value=-89) -> pd.DataFrame:
-    if isinstance(tests, str):
-        tests = {'cont_cont': tests,
-                 'cat_cat': tests,
-                 'bi_cont': tests,
-                 'cont_cat': tests}
-
+def calculate_association_scores(cat_data, cont_data, bi_data, tests, num_workers=1, nan_value=-89) -> pd.DataFrame:
     cont_data = cont_data.copy()
-    cont_data = cont_data.select_dtypes(include=[np.number])
+    if not cont_data.select_dtypes(include=[np.number]).shape[1] == cont_data.shape[1]:
+        raise ValueError('Continuous data contains non-numeric columns.')
 
     cat_data = _order_categories(cat_data)
+    bi_data = _order_categories(bi_data)
 
     tests = {k: v.lower() for k, v in tests.items()}
 
-    cont_cat_results = napy_cat_cont(cont_data, cat_data, tests.get('cont_cat'), num_workers=num_workers, nan_value=nan_value)
+    cont_cat_results = napy_cat_cont(cont_data, cat_data, test=tests.get('cont_cat'), num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-categorical score creation")
 
-    bi_cont_results = napy_binary_cat_cont(cont_data, cat_data, test=tests.get('bi_cont'), num_workers=num_workers, nan_value=nan_value)
+    bi_cont_results = napy_binary_cat_cont(cont_data, bi_data, test=tests.get('bi_cont'), num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-binary score creation")
     
-    cat_cat_results = napy_cat_cat(cat_data, num_workers=num_workers, nan_value=nan_value)
+    cat_cat_results = napy_cat_cat(cat_data, bi_data, num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished categorical-categorical score creation")
     
     cont_cont_results = napy_cont_cont(cont_data, test=tests.get('cont_cont'), num_workers=num_workers, nan_value=nan_value)

@@ -12,7 +12,7 @@ from modina.statistics_utils import *
 def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'pre-LS', node_metric: str = 'STC', ranking_alg: str = 'PageRank+',
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
                      stc_test: str = 'mwu', max_path_length: int=2, dc_metric: str = 'pre-P', 
-                     cont_cont: str = 'spearman', cat_cat: str = 'chi2', bi_cont: str = 'mann-whitney u', cont_cat: str = 'kruskal-wallis',
+                     cont_cont: str = 'spearman', bi_cont: str = 'mwu', cont_cat: str = 'kruskal',
                      correction: str = 'bh', nan_value: int = -89, num_workers: int=1,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, pd.DataFrame, pd.DataFrame, dict]:
     """
@@ -22,9 +22,8 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param context2: Observed data of Context 2 (rows: samples, columns: variables).
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
     :param cont_cont: Test for continuous-continuous association scores. Defaults to 'spearman'.
-    :param cat_cat: Test for categorical-categorical association scores. Defaults to 'chi2'.
-    :param bi_cont: Test for categorical-continuous association (binary) scores. Defaults to 'mann-whitney u'.
-    :param cont_cat: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal-wallis'.
+    :param bi_cont: Test for categorical-continuous association (binary) scores. Defaults to 'mwu'.
+    :param cont_cat: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal'.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param nan_value: Value to represent NaN in the data. Defaults to -89.
     :param num_workers: Number of workers for parallel processing. Defaults to 1.
@@ -58,10 +57,10 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
 
     # Score calculation
     logging.info('Computing association scores...')
-    scores1 = compute_context_scores(context_data=context1, meta_file=meta_file, cont_cont=cont_cont, cat_cat=cat_cat,
+    scores1 = compute_context_scores(context_data=context1, meta_file=meta_file, cont_cont=cont_cont,
                                      bi_cont=bi_cont, cont_cat=cont_cat, correction=correction, nan_value=nan_value,
                                      num_workers=num_workers, path=scores1_path)
-    scores2 = compute_context_scores(context_data=context2, meta_file=meta_file, cont_cont=cont_cont, cat_cat=cat_cat,
+    scores2 = compute_context_scores(context_data=context2, meta_file=meta_file, cont_cont=cont_cont,
                                      bi_cont=bi_cont, cont_cat=cont_cat, correction=correction, nan_value=nan_value,
                                      num_workers=num_workers, path=scores2_path)
     logging.info('Done.')
@@ -101,7 +100,6 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         'name1': name1,
         'name2': name2,
         'cont_cont': cont_cont,
-        'cat_cat': cat_cat,
         'bi_cont': bi_cont,
         'cont_cat': cont_cat,
         'correction':  correction,
@@ -130,7 +128,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
 
 # Statistical association score computation
 def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame, 
-                           cont_cont: str = 'spearman', cat_cat: str = 'chi2', bi_cont: str = 'mann-whitney u', cont_cat: str = 'kruskal-wallis', 
+                           cont_cont: str = 'spearman', bi_cont: str = 'mwu', cont_cat: str = 'kruskal', 
                            correction: str = 'bh', nan_value: int = -89, num_workers: int = 1, 
                            path: Optional[str] = None) -> pd.DataFrame:
     """
@@ -139,9 +137,8 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     :param context_data: The raw context data (rows: samples, columns: variables).
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
     :param cont_cont: Test for continuous-continuous association scores. Defaults to 'spearman'.
-    :param cat_cat: Test for categorical-categorical association scores. Defaults to 'chi2'.
-    :param bi_cont: Test for categorical-continuous association (binary) scores. Defaults to 'mann-whitney u'.
-    :param cont_cat: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal-wallis'.
+    :param bi_cont: Test for categorical-continuous association (binary) scores. Defaults to 'mwu'.
+    :param cont_cat: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal'.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param nan_value: Value to represent NaN in the data. Defaults to -89.
     :param num_workers: Number of workers for parallel processing. Defaults to 1.
@@ -152,18 +149,17 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     _check_input_data(context=context_data, meta_file=meta_file)
 
     # Separate the data into categorical and continuous data
-    cat, cont = separate_cat_cont(context_data, meta_file)
+    cat, cont, bi = separate_types(context_data, meta_file)
 
     # Create dict for test types
     tests = {
         "cont_cont": cont_cont,
-        "cat_cat": cat_cat,
         "bi_cont": bi_cont,
         "cont_cat": cont_cat
     }
 
     # Calculate scores
-    scores = calculate_association_scores(cat_data=cat, cont_data=cont, tests=tests, num_workers=num_workers, nan_value=nan_value)
+    scores = calculate_association_scores(cat_data=cat, cont_data=cont, bi_data=bi, tests=tests, num_workers=num_workers, nan_value=nan_value)
 
     #TODO: make this simpler and change the testing process in score_calculation.py => not necessary to stick to the DyHealthNet code anymore!
     # Take the adjusted p-value and the corresponding effect size
@@ -187,7 +183,8 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
                 scores_final.loc[i, 'test_type'] = test
                 break
     
-    scores_final = scores_final.sort_values(by=['label1', 'label2']).reset_index(drop=True)
+    scores_final = scores_final.drop_duplicates(subset=['label1', 'label2', 'test_type'], keep='first')
+    scores_final = scores_final.sort_values(by=['label1', 'label2', 'test_type']).reset_index(drop=True)
 
     # Save scores
     if path is not None:
