@@ -159,11 +159,14 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     # Calculate scores
     scores = calculate_association_scores(cat_data=cat, cont_data=cont, bi_data=bi, tests=tests, num_workers=num_workers, nan_value=nan_value)
 
-    #TODO: make this simpler and change the testing process in score_calculation.py => not necessary to stick to the DyHealthNet code anymore!
     # Take the adjusted p-value and the corresponding effect size
     column_names = scores.iloc[:, 2:].columns
     if correction == 'bh':
         correction = 'benjamini_hb'
+    elif correction == 'by':
+        correction = 'benjamini_yek'
+    else:
+        raise ValueError(f"Invalid correction method '{correction}'. Choose from: 'bh', 'yek' or 'bonf'.")
 
     p_adj = '_p_' + correction
     p_columns = [column for column in column_names if p_adj in column]
