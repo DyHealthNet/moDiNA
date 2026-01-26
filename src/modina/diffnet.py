@@ -89,9 +89,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
 
     # Ranking
     logging.info('Computing ranking...')
-    ranking = compute_ranking(edges_diff=edges_diff, nodes_diff=nodes_diff, ranking_alg=ranking_alg,
-                              edge_metric=edge_metric, node_metric=node_metric,
-                              path=ranking_path)
+    ranking = compute_ranking(edges_diff=edges_diff, nodes_diff=nodes_diff, ranking_alg=ranking_alg, path=ranking_path)
     logging.info('Done.')
 
     # Create config dict
@@ -393,32 +391,36 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
             nx.write_graphml(diff_net, file_path)
 
         else:
-            raise ValueError(f"Invalid format {format}. Choose from 'csv' or 'graphml'.")     
+            raise ValueError(f"Invalid format {format}. Choose from 'csv' or 'graphml'.")
+
+    edge_metric_signed = edge_metric + '_signed'
+    edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric, edge_metric_signed]]
+    nodes_diff = nodes_diff[[node_metric]]
 
     return edges_diff, nodes_diff 
 
 
 # Ranking
 def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_alg: str, 
-                     node_metric: Optional[str] = None, edge_metric: Optional[str] = None, 
-                     path : Optional[str] = None) -> list:
+                    path : Optional[str] = None) -> list:
     """
     Compute a ranking based on the specified ranking algorithm.
     
     :param nodes_diff: Differential node scores.
     :param edges_diff: Differential edge scores.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'.
-    :param node_metric: Node metric used for ranking. Required for 'PageRank+' and 'direct_node' algorithms.
-    :param edge_metric: Edge metric used for ranking. Required for 'PageRank+', 'PageRank', 'absDimontRank' and 'DimontRank' algorithms.
     :param path: Optional path to save the ranking as a CSV file.
     """
 
+    node_metric = nodes_diff.columns[0]
+    edge_metric = edges_diff.columns[3]
+
     # Personalized PageRank
     if ranking_alg == 'PageRank+':
-        if node_metric is None or edge_metric is None:
-            raise ValueError('Personalized PageRank requires a node and edge metric.')
-        
-        invert = True if node_metric == 'STC' else False
+        if node_metric == 'STC':
+            invert = True
+        else:
+            invert = False
         ranking_scores = pagerank(nodes_diff=nodes_diff, edges_diff=edges_diff,
                                 node_metric=node_metric, edge_metric=edge_metric,
                                 invert=invert, personalization=True)
@@ -426,30 +428,22 @@ def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_
 
     # PageRank
     elif ranking_alg == 'PageRank':
-        if edge_metric is None:
-            raise ValueError('PageRank requires an edge metric.')
         ranking_scores = pagerank(edges_diff=edges_diff, edge_metric=edge_metric,
                                 personalization=False)
         ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # DimontRank with absolute difference
     elif ranking_alg == 'absDimontRank':
-        if edge_metric is None:
-            raise ValueError('absDimontRank requires an edge metric.')
         ranking_scores = dimontrank(edges_diff=edges_diff, edge_metric=edge_metric, mode='abs')
         ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # DimontRank with signed difference
     elif ranking_alg == 'DimontRank':
-        if edge_metric is None:
-            raise ValueError('DimontRank requires an edge metric.')
         ranking_scores = dimontrank(edges_diff=edges_diff, edge_metric=edge_metric, mode='signed')
         ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # Direct ranking based on node metric
     elif ranking_alg == 'direct_node':
-        if node_metric is None:
-            raise ValueError('Direct ranking requires a node metric.')
         ranking_scores = nodes_diff[node_metric]
 
         if node_metric == 'STC':
@@ -458,8 +452,6 @@ def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_
             ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
     
     elif ranking_alg == 'direct_edge':
-        if edge_metric is None:
-            raise ValueError('Direct edge ranking requires an edge metric.')
         ranking_scores = edges_diff[['label1', 'label2', edge_metric]].copy()
         ranking_scores = ranking_scores.sort_values(by=edge_metric, ascending=False).reset_index(drop=True)
         ranks = ranking_scores[['label1', 'label2']].values.tolist()
