@@ -9,12 +9,13 @@ from modina.statistics_utils import *
 
 
 # Wrapper function to perform the whole moDiNA pipeline
-def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'pre-LS', node_metric: str = 'STC', ranking_alg: str = 'PageRank+',
+def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'pre-LS', node_metric: str = 'STC', 
+                     ranking_alg: str = 'PageRank+', per_type: bool = False,
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
                      stc_test: str = 'mwu', max_path_length: int=2, dc_metric: str = 'pre-P', 
                      cont_cont: str = 'spearman', bi_cont: str = 'mwu', cont_cat: str = 'kruskal',
                      correction: str = 'bh', num_workers: int=1,
-                     project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, pd.DataFrame, pd.DataFrame, dict]:
+                     project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, list, pd.DataFrame, pd.DataFrame, dict]:
     """
     Wrapper function to perform an end-to-end differential network analysis following the moDiNA pipeline.
     
@@ -36,6 +37,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
     :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'pre-P'.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'. Defaults to 'PageRank+'.
+    :param per_type: Whether to compute rankings per variable type. Defaults to False.
     :param name1: Name of Context 1. Used for saving files. Defaults to 'context1'.
     :param name2: Name of Context 2. Used for saving files. Defaults to 'context2'.
     :param project_path: Optional path to save results. Defaults to None.
@@ -89,7 +91,8 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
 
     # Ranking
     logging.info('Computing ranking...')
-    ranking = compute_ranking(edges_diff=edges_diff, nodes_diff=nodes_diff, ranking_alg=ranking_alg, path=ranking_path)
+    ranking, rankings_per_type = compute_ranking(edges_diff=edges_diff, nodes_diff=nodes_diff, ranking_alg=ranking_alg, path=ranking_path, 
+                                                 per_type=per_type, meta_file=meta_file)
     logging.info('Done.')
 
     # Create config dict
@@ -120,7 +123,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         with open(config_path, 'w') as f:
             json.dump(params, f, indent=4)
 
-    return ranking, edges_diff, nodes_diff, params
+    return ranking, rankings_per_type, edges_diff, nodes_diff, params
 
 
 # Statistical association score computation
@@ -401,14 +404,15 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
 
 
 # Ranking
-def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_alg: str, 
-                    path : Optional[str] = None) -> list:
+def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_alg: str, per_type: bool = False, 
+                    path: Optional[str] = None, meta_file: Optional[pd.DataFrame] = None) -> Tuple[list, list]:
     """
     Compute a ranking based on the specified ranking algorithm.
     
     :param nodes_diff: Differential node scores.
     :param edges_diff: Differential edge scores.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'.
+    :param per_type: Whether to compute rankings per variable type. Defaults to False.
     :param path: Optional path to save the ranking as a CSV file.
     """
 
@@ -460,12 +464,50 @@ def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_
         raise ValueError(f"Invalid ranking algorithm {ranking_alg}. "
                          "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' or 'direct_edge'.")
     
+    rank_cont = []
+    rank_cat = []
+    rank_bi = []
+    
+    if per_type is True:
+        if ranking_alg == 'direct_edge':
+            raise ValueError("Rankings per type are only supported for node-based rankings.")
+        
+        if meta_file is None:
+            raise ValueError("Please provide a 'meta_file' when requesting rankings per type.")
+        
+        meta_file = meta_file.set_index('label')
+
+        for node in ranks:
+            node_type = meta_file.at[node, 'type']
+
+            if node_type == 'continuous':
+                rank_cont.append(node)
+            elif node_type == 'categorical':
+                rank_cat.append(node)
+            elif node_type == 'binary':
+                rank_bi.append(node)
+            else:
+                raise ValueError(f"Invalid node type '{node_type}' for node '{node}' in meta_file.")
+
     if path is not None:
         ranking_df = pd.DataFrame({"node": ranks, "rank": range(1, len(ranks) + 1)})
         ranking_df = ranking_df.sort_values("node")
         ranking_df.to_csv(path, index=False)
 
-    return ranks
+        if per_type is True:
+            rank_cont_df = pd.DataFrame({"node": rank_cont, "rank": range(1, len(rank_cont) + 1)})
+            rank_cat_df = pd.DataFrame({"node": rank_cat, "rank": range(1, len(rank_cat) + 1)})
+            rank_bi_df = pd.DataFrame({"node": rank_bi, "rank": range(1, len(rank_bi) + 1)})
+
+            rank_cont_path = os.path.splitext(path)[0] + '_continuous.csv'
+            rank_cat_path = os.path.splitext(path)[0] + '_categorical.csv'
+            rank_bi_path = os.path.splitext(path)[0] + '_binary.csv'
+
+            rank_cont_df.to_csv(rank_cont_path, index=False)
+            rank_cat_df.to_csv(rank_cat_path, index=False)
+            rank_bi_df.to_csv(rank_bi_path, index=False)
+
+    return ranks, [rank_cont, rank_cat, rank_bi]
 
 
 # Differential edge computation
