@@ -13,7 +13,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
                      stc_test: str = 'mwu', max_path_length: int=2, dc_metric: str = 'pre-P', 
                      cont_cont: str = 'spearman', bi_cont: str = 'mwu', cont_cat: str = 'kruskal',
-                     correction: str = 'bh', nan_value: int = -89, num_workers: int=1,
+                     correction: str = 'bh', num_workers: int=1,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, pd.DataFrame, pd.DataFrame, dict]:
     """
     Wrapper function to perform an end-to-end differential network analysis following the moDiNA pipeline.
@@ -25,7 +25,6 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param bi_cont: Test for categorical-continuous association (binary) scores. Defaults to 'mwu'.
     :param cont_cat: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal'.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
-    :param nan_value: Value to represent NaN in the data. Defaults to -89.
     :param num_workers: Number of workers for parallel processing. Defaults to 1.
     :param filter_method: Method used for filtering. Defaults to None.
     :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
@@ -58,11 +57,11 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     # Score calculation
     logging.info('Computing association scores...')
     scores1 = compute_context_scores(context_data=context1, meta_file=meta_file, cont_cont=cont_cont,
-                                     bi_cont=bi_cont, cont_cat=cont_cat, correction=correction, nan_value=nan_value,
-                                     num_workers=num_workers, path=scores1_path)
+                                               bi_cont=bi_cont, cont_cat=cont_cat, correction=correction,
+                                               num_workers=num_workers, path=scores1_path)
     scores2 = compute_context_scores(context_data=context2, meta_file=meta_file, cont_cont=cont_cont,
-                                     bi_cont=bi_cont, cont_cat=cont_cat, correction=correction, nan_value=nan_value,
-                                     num_workers=num_workers, path=scores2_path)
+                                               bi_cont=bi_cont, cont_cat=cont_cat, correction=correction,
+                                               num_workers=num_workers, path=scores2_path)
     logging.info('Done.')
 
     # Filtering
@@ -129,7 +128,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
 # Statistical association score computation
 def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame, 
                            cont_cont: str = 'spearman', bi_cont: str = 'mwu', cont_cat: str = 'kruskal', 
-                           correction: str = 'bh', nan_value: int = -89, num_workers: int = 1, 
+                           correction: str = 'bh', num_workers: int = 1, 
                            path: Optional[str] = None) -> pd.DataFrame:
     """
     Compute association scores for a given context.
@@ -140,13 +139,12 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     :param bi_cont: Test for categorical-continuous association (binary) scores. Defaults to 'mwu'.
     :param cont_cat: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal'.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
-    :param nan_value: Value to represent NaN in the data. Defaults to -89.
     :param num_workers: Number of workers for parallel processing. Defaults to 1.
     :param path: Optional path to save the computed scores as a CSV file. Defaults to None.
     :return: A pd.DataFrame containing the computed association scores.
     """
-    # Check if input data is in a valid format
-    _check_input_data(context=context_data, meta_file=meta_file)
+    # Check nan values and input format
+    context_data, nan_value = _check_input_data(context=context_data, meta_file=meta_file)
 
     # Separate the data into categorical and continuous data
     cat, cont, bi = separate_types(context_data, meta_file)
@@ -671,9 +669,9 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
 
 
 # Check input format of context data
-def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame) -> bool:
+def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     """
-    Check if the input data is in the expected format.
+    Check if the input data is in the expected format and identify nan values.
     
     :param context: The context data to check.
     :param meta_file: Metadata file containing one row per variable in the context data.
@@ -698,6 +696,19 @@ def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame) -> bool:
     if not context_vars.issubset(meta_vars):
         missing_vars = context_vars - meta_vars
         raise ValueError(f'The following variables are missing in the meta_file: {missing_vars}.')
+    
+    # Search for non-numeric and NaN values
+    if context.apply(lambda col: pd.to_numeric(col, errors="coerce").isna()).values.any() > 0:
+        logging.warning('The context data contains non-numeric or NaN values.')
+    
+    # Replace non-numeric values with a numeric value that does not exist in the data
+    existing = set(pd.to_numeric(context.stack(), errors="coerce").dropna().values)
+    while True:
+        nan_value = np.random.randint(-10**5, -10**3)
+        if nan_value not in existing:
+            break
 
-    return True
+    context = context.fillna(nan_value)
+
+    return context, nan_value
     

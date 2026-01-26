@@ -8,9 +8,8 @@ import logging
 EXCLUDED_EFFECTS = {'chi2', 't', 'F', 'U', 'H'}
 
 
-def _df_to_numpy(df: pd.DataFrame, nan_value=-89):
+def _df_to_numpy(df: pd.DataFrame):
     cols = df.columns
-    df = df.fillna(nan_value)
     df_np = df.to_numpy(dtype=np.float64).copy()
     return df_np, cols
 
