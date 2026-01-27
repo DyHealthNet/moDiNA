@@ -208,16 +208,26 @@ def pre_rescaling(scores1, scores2, metric):
         scores2_filtered = scores2[scores2['test_type'] == test]
         values = np.concatenate([scores1_filtered[metric_raw].to_numpy(), scores2_filtered[metric_raw].to_numpy()])
 
+        # Take absolute effect sizes
+        if metric == 'pre-E':
+            values = np.abs(values)
+
         # Min-Max normalization
         min_val = np.min(values)
         max_val = np.max(values)
 
+        rescaled1 = None
+        rescaled2 = None
+
         if min_val == max_val:
             rescaled1 = 0
             rescaled2 = 0
-        else:
+        elif metric == 'pre-P':
             rescaled1 = (scores1_filtered[metric_raw] - min_val) / (max_val - min_val)
             rescaled2 = (scores2_filtered[metric_raw] - min_val) / (max_val - min_val)
+        elif metric == 'pre-E':
+            rescaled1 = (np.abs(scores1_filtered[metric_raw]) - min_val) / (max_val - min_val)
+            rescaled2 = (np.abs(scores2_filtered[metric_raw]) - min_val) / (max_val - min_val)
 
         scores1.loc[scores1['test_type'] == test, metric] = rescaled1
         scores2.loc[scores2['test_type'] == test, metric] = rescaled2
