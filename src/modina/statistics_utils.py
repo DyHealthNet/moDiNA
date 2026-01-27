@@ -69,7 +69,12 @@ def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='pre-P', we
         else:
             raise ValueError(f"Invalid metric '{metric}' for weighted degree centrality.")
     else:
-        method = 'DC'
+        if metric == 'pre-P':
+            method = 'DC-P'
+        elif metric == 'pre-E':
+            method = 'DC-E'
+        else:
+            raise ValueError(f"Invalid metric '{metric}' for degree centrality.")
 
     nodes_diff = nodes_diff.copy()
     nodes = nodes_diff.index
@@ -110,7 +115,7 @@ def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='pre-P', we
                         if scores1.loc[i, metric] != 0: 
                             count1 += 1
                     else:
-                        raise ValueError(f"Invalid metric '{metric}' for differential degree centrality.")
+                        raise ValueError(f"Invalid metric '{metric}' for degree centrality.")
 
             for i in scores2.index:
                 if (scores2.loc[i, 'label1'] == node) or (scores2.loc[i, 'label2'] == node):
@@ -121,7 +126,7 @@ def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='pre-P', we
                         if scores2.loc[i, metric] != 0:
                             count2 += 1
                     else:
-                        raise ValueError(f"Invalid metric '{metric}' for differential degree centrality.")
+                        raise ValueError(f"Invalid metric '{metric}' for degree centrality.")
 
             degree_centrality.loc[node, 'context_a'] = count1
             degree_centrality.loc[node, 'context_b'] = count2
@@ -136,25 +141,29 @@ def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='pre-P', we
         max2 = 1.
 
     # (Absolute) difference
-    method_signed = method + '_signed'
-    nodes_diff[method_signed] = (degree_centrality['context_a'] / max1) - (degree_centrality['context_b'] / max2)
+    #method_signed = method + '_signed'
+    #nodes_diff[method_signed] = (degree_centrality['context_a'] / max1) - (degree_centrality['context_b'] / max2)
     nodes_diff[method] = abs((degree_centrality['context_a'] / max1) - (degree_centrality['context_b'] / max2))
 
     return nodes_diff
 
 
 # Compute differential PageRank centrality
-def calculate_pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E', invert=False):
+def calculate_pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E'):
     scores1 = scores1.copy()
     scores2 = scores2.copy()
 
-    # Inverse weights if specified (e.g. in the case of p-values) and set edge 'weight' column
-    if invert is True:
+    # Inverse weights in the case of p-values and set edge 'weight' column
+    if metric == 'pre-P':
+        method = 'PRC-P'
         scores1['weight'] = 1 - scores1[metric]
         scores2['weight'] = 1 - scores2[metric]
-    elif metric != 'weight':
+    elif metric == 'pre-E':
+        method = 'PRC-E'
         scores1['weight'] = scores1[metric]
         scores2['weight'] = scores2[metric]
+    else:
+        raise ValueError(f"Invalid metric '{metric}' for PageRank centrality.")
 
     # Create network and apply pagerank algorithm
     network1 = nx.from_pandas_edgelist(scores1, 'label1', 'label2', 'weight')
@@ -166,7 +175,7 @@ def calculate_pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E', 
     max1 = max(ranking1.values())
     max2 = max(ranking2.values())
 
-    nodes_diff['PRC'] = nodes_diff.index.map(
+    nodes_diff[method] = nodes_diff.index.map(
         lambda node: abs((ranking1.get(node, 0) / max1) - (ranking2.get(node, 0) / max2))
     )
 

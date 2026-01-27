@@ -11,7 +11,7 @@ from modina.statistics_utils import *
 # Wrapper function to perform the whole moDiNA pipeline
 def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'pre-LS', node_metric: str = 'STC', ranking_alg: str = 'PageRank+',
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
-                     stc_test: str = 'mwu', max_path_length: int=2, dc_metric: str = 'pre-P', 
+                     stc_test: str = 'mwu', max_path_length: int=2,
                      cont_cont: str = 'spearman', bi_cont: str = 'mwu', cont_cat: str = 'kruskal',
                      correction: str = 'bh', num_workers: int=1,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, dict, pd.DataFrame, pd.DataFrame, dict]:
@@ -34,7 +34,6 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param node_metric: Node metric used to construct the differential network. Defaults to 'STC'.
     :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
-    :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'pre-P'.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'. Defaults to 'PageRank+'.
     :param name1: Name of Context 1. Used for saving files. Defaults to 'context1'.
     :param name2: Name of Context 2. Used for saving files. Defaults to 'context2'.
@@ -83,7 +82,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
                                                   context1=context1_filtered, context2=context2_filtered,
                                                   edge_metric=edge_metric, node_metric=node_metric,
                                                   stc_test=stc_test, max_path_length=max_path_length,
-                                                  correction=correction, dc_metric=dc_metric,
+                                                  correction=correction,
                                                   path=project_path, format='csv')
     logging.info('Done.')
 
@@ -114,8 +113,6 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         params['stc_test'] = stc_test
     if edge_metric == 'int-IS':
         params['max_path_length'] = max_path_length
-    if node_metric in ['DC-STC', 'DC']:
-        params['dc_metric'] = dc_metric
 
     if config_path is not None:
         with open(config_path, 'w') as f:
@@ -343,7 +340,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
 # Differential network computation
 def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
                          edge_metric: str = 'pre-LS', node_metric: str = 'STC',
-                         stc_test: str = 'mwu', max_path_length: int = 2, correction: str = 'bh', dc_metric: str = 'pre-P',
+                         stc_test: str = 'mwu', max_path_length: int = 2, correction: str = 'bh',
                          path: Optional[str] = None, format: str = 'csv') -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Computation of a differential network defined by a node metric and an edge metric.
@@ -357,7 +354,6 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
-    :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'pre-P'.
     :param path: Optional path to save the differential scores as CSV files. Defaults to None.
     :param format: File format to save the differential network. Options are 'csv' and 'graphml'. Defaults to 'csv'.
     :return: A tuple (edges_diff, nodes_diff) containing the computed differential edges and nodes.
@@ -374,7 +370,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
 
     # Nodes
     nodes_diff = _compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
-                                     node_metric=node_metric, correction=correction, stc_test=stc_test, dc_metric=dc_metric)
+                                     node_metric=node_metric, correction=correction, stc_test=stc_test)
 
     if path is not None:
         if format == 'csv':
@@ -624,7 +620,7 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
         edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
 
     else:
-        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'pre-P', 'pre-E', 'post-E', 'int-IS', 'pre-CS', 'post-CS', 'pre-LS' or 'post-LS'.")
+        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'pre-P', 'pre-E', 'post-P', 'post-E', 'int-IS', 'pre-CS', 'post-CS', 'pre-LS' or 'post-LS'.")
 
     if edges_diff is None:
         # Compute difference in edge scores
@@ -635,7 +631,7 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
 
 # Differential node computation
 def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
-                        node_metric: str, correction: str = 'bh', stc_test: str = 'mwu', dc_metric: str = 'pre-P') -> pd.DataFrame:
+                        node_metric: str, correction: str = 'bh', stc_test: str = 'mwu') -> pd.DataFrame:
     """
     Compute differential node scores based on the specified node metric.
 
@@ -646,7 +642,6 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
     :param node_metric: Node metric to compute the differential node scores.
     :param correction: Correction method for multiple testing. Only needed if node_metric is 'STC'. Defaults to 'bh'.
     :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
-    :param dc_metric: Edge metric used for differential degree centrality computation. Defaults to 'pre-P'.
     :return: A DataFrame containing the computed differential node scores.
     """
 
@@ -662,43 +657,48 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
     if node_metric == 'STC':
         nodes_diff = subtract_nodes(context1=context1, context2=context2, test=True, test_type=stc_test, correction=correction)
 
-    # Degree centrality (DC)
-    elif node_metric == 'DC':
+    # Degree centrality based on pre-P (DC-P)
+    elif node_metric == 'DC-P':
         nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
-        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, metric=dc_metric, weighted=False,
-                                                        scores1=scores1, scores2=scores2)
-        
-    # Degree centrality and statistical test centrality combined (DC-STC)
-    elif node_metric == 'DC-STC':
-        nodes_diff = subtract_nodes(context1=context1, context2=context2, test=True, test_type=stc_test, correction=correction)
-        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, metric=dc_metric, weighted=False,
-                                                        scores1=scores1, scores2=scores2)
-        
-        nodes_diff['DC-STC'] = nodes_diff['DC'] - nodes_diff['STC'] + 1.0        
-    
+        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, weighted=False,
+                                                 scores1=scores1, scores2=scores2,
+                                                 metric='pre-P')
+
+    # Degree centrality based on pre-E (DC-E)
+    elif node_metric == 'DC-E':
+        nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, weighted=False,
+                                                 scores1=scores1, scores2=scores2,
+                                                 metric='pre-E')
+
     # Weighted degree centrality based on pre-P (WDC-P)
     elif node_metric == 'WDC-P':
         nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
-        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, metric='pre-P', weighted=True,
-                                                        scores1=scores1, scores2=scores2)
+        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, weighted=True,
+                                                 scores1=scores1, scores2=scores2,
+                                                 metric='pre-P')
 
     # Weighted degree centrality based on pre-E (WDC-E)
     elif node_metric == 'WDC-E':
         nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
-        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, metric='pre-E', weighted=True,
-                                                        scores1=scores1, scores2=scores2)
+        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, weighted=True,
+                                                 scores1=scores1, scores2=scores2,
+                                                 metric='pre-E')
 
-    # PageRank centrality (PRC)
-    elif node_metric == 'PRC':
+    # PageRank centrality based on pre-E (PRC-E)
+    elif node_metric == 'PRC-E':
         nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
-
-        # TODO: allow 'pre-P' metric for PRC (don't forget to invert)
-
-        nodes_diff = calculate_pagerank_centrality(nodes_diff=nodes_diff, metric='pre-E', invert=False,
-                                                            scores1=scores1, scores2=scores2)
+        nodes_diff = calculate_pagerank_centrality(nodes_diff=nodes_diff, metric='pre-E',
+                                                   scores1=scores1, scores2=scores2)
+    
+    # PageRank centrality based on pre-P (PRC-P)
+    elif node_metric == 'PRC-P':
+        nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
+        nodes_diff = calculate_pagerank_centrality(nodes_diff=nodes_diff, metric='pre-P',
+                                                   scores1=scores1, scores2=scores2)
 
     else:
-        raise ValueError(f"Invalid node metric '{node_metric}'. Choose from: 'DC', 'STC', 'DC-STC', 'WDC-P', 'WDC-E' or 'PRC'.")
+        raise ValueError(f"Invalid node metric '{node_metric}'. Choose from: 'STC', 'DC-P', 'DC-E', 'WDC-P', 'WDC-E', 'PRC-P' or 'PRC-E'.")
 
     return nodes_diff
 
