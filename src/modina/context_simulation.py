@@ -16,7 +16,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     """
     Simulate two contexts with binary and continuous nodes using a Gaussian copula.
     
-    :param path: Path to save the simulated contexts and meta file. If None, files are not saved.
+    :param path: Path to save the simulated contexts, the meta file and the ground truth information. If None, files are not saved.
     :param name1: Name of the first context.
     :param name2: Name of the second context.
     :param n_bi: Number of binary nodes to simulate.
@@ -192,8 +192,6 @@ def simulate_copula(path=None, name1='context1', name2='context2',
             context1_cat[node] = np.searchsorted(cdf, u1[i, :])
             context2_cat[node] = np.searchsorted(cdf, u2[i, :])
 
-    ground_truth = shift_nodes + corr_nodes + shift_corr_nodes
-
     # Combine continuous and binary data
     context1 = context1_cont.join(context1_bi)
     context2 = context2_cont.join(context2_bi)
@@ -208,6 +206,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     if path:
         context1.to_csv(os.path.join(path, f'{name1}.csv'))
         context2.to_csv(os.path.join(path, f'{name2}.csv'))
+        meta.to_csv(os.path.join(path, 'meta.csv'), index=False)
+        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth.csv'))
 
     return context1, context2, meta, (shift_nodes, corr_nodes, shift_corr_nodes)
 
@@ -289,3 +289,21 @@ def simu_gaussian(n: int, m: int, corr_matrix: np.ndarray, mean_vector: Optional
     u = sc.stats.norm.cdf(y, 0, 1)
 
     return u
+
+
+# Save ground truth nodes to file
+def save_gt(groundtruths, path):
+    shift = groundtruths[0]
+    corr = groundtruths[1]
+    shift_corr = groundtruths[2]
+
+    with open(path, 'w') as f:
+        f.write('label, description\n')
+        for node in shift:
+            f.write(node + ', mean shift\n')
+        for pair in corr:
+            f.write(pair[0] + ', diff. corr.\n')
+            f.write(pair[1] + ', diff. corr.\n')
+        for pair in shift_corr:
+            f.write(pair[0] + ', mean shift + diff. corr.\n')
+            f.write(pair[1] + ', mean shift + diff. corr.\n')

@@ -46,7 +46,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         config_path = os.path.join(project_path, 'config.json')
         scores1_path = os.path.join(project_path, f'{name1}_scores.csv')
         scores2_path = os.path.join(project_path, f'{name2}_scores.csv')
-        ranking_path = os.path.join(project_path, 'ranking.csv')
+        ranking_path = os.path.join(project_path, f'{ranking_alg}.csv')
     else:
         scores1_path = None
         config_path = None
