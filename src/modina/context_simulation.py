@@ -9,9 +9,9 @@ import os
 # Simulate mixed data using a gaussian copula 
 def simulate_copula(path=None, name1='context1', name2='context2',
                     n_bi=50, n_cont=50, n_cat=50, n_samples=500, 
-                    n_shift_cont=4, n_shift_bi=4, n_shift_cat=4, 
-                    n_corr_cont_cont=2, n_corr_bi_bi=2, n_corr_cat_cat=2, n_corr_bi_cont=2, n_corr_bi_cat=2, n_corr_cont_cat=2, 
-                    n_both_cont_cont=2, n_both_bi_bi=2, n_both_cat_cat=2, n_both_bi_cont=2, n_both_bi_cat=2, n_both_cont_cat=2,
+                    n_shift_cont=0, n_shift_bi=0, n_shift_cat=0, 
+                    n_corr_cont_cont=0, n_corr_bi_bi=0, n_corr_cat_cat=0, n_corr_bi_cont=0, n_corr_bi_cat=0, n_corr_cont_cat=0, 
+                    n_both_cont_cont=0, n_both_bi_bi=0, n_both_cat_cat=0, n_both_bi_cont=0, n_both_bi_cat=0, n_both_cont_cat=0,
                     shift=0.5, corr=0.7):
     """
     Simulate two contexts with binary and continuous nodes using a Gaussian copula.
@@ -207,7 +207,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         context1.to_csv(os.path.join(path, f'{name1}.csv'))
         context2.to_csv(os.path.join(path, f'{name2}.csv'))
         meta.to_csv(os.path.join(path, 'meta.csv'), index=False)
-        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth.csv'))
+        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth.txt'))
 
     return context1, context2, meta, (shift_nodes, corr_nodes, shift_corr_nodes)
 
@@ -298,7 +298,7 @@ def save_gt(groundtruths, path):
     shift_corr = groundtruths[2]
 
     with open(path, 'w') as f:
-        f.write('label, description\n')
+        f.write('node, description\n')
         for node in shift:
             f.write(node + ', mean shift\n')
         for pair in corr:
