@@ -534,14 +534,14 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
         # Compute differences in edge metrics first
         edges_diff = subtract_edges(scores1, scores2, metrics=['raw-P'], included_cols=['test_type'])
         # Min-Max rescaling
-        edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
+        edges_diff = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
 
     # Post-rescaled effect size (post-E)
     elif edge_metric == 'post-E':
         # Compute differences in edge metrics first
         edges_diff = subtract_edges(scores1, scores2, metrics=['raw-E'], included_cols=['test_type'])
         # Min-Max rescaling
-        edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
+        edges_diff = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
 
     # Pre-rescaled combined score (pre-CS)
     elif edge_metric == 'pre-CS':
@@ -554,8 +554,8 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
         # Compute differences in edge metrics first
         edges_diff = subtract_edges(scores1, scores2, metrics=['raw-P', 'raw-E'], included_cols=['test_type'])
         # Rescale difference in effect sizes
-        edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric='post-E')
-        edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric='post-P')
+        edges_diff = post_rescaling(diff_scores=edges_diff, metric='post-E')
+        edges_diff = post_rescaling(diff_scores=edges_diff, metric='post-P')
         # Compute combined score
         edges_diff[edge_metric] = (edges_diff['post-E'] + edges_diff['post-P'])
 
@@ -617,7 +617,7 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
         edges_diff = subtract_edges(scores1, scores2,
                                     metrics=['raw-LS'], included_cols=['test_type'])
         # Min-Max rescaling
-        edges_diff, _ = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
+        edges_diff = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
 
     else:
         raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'pre-P', 'pre-E', 'post-P', 'post-E', 'int-IS', 'pre-CS', 'post-CS', 'pre-LS' or 'post-LS'.")
