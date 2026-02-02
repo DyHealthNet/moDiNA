@@ -245,8 +245,10 @@ def post_rescaling(diff_scores, metric):
         metric_raw = 'raw-E'
     elif metric == 'post-P':
         metric_raw = 'raw-P'
+    elif metric == 'post-CS':
+        metric_raw = 'raw-CS'
     else:
-        raise ValueError(f"Invalid metric '{metric}'. Only 'post-E', 'post-P' and 'post-LS' are supported.")
+        raise ValueError(f"Invalid metric '{metric}'. Only 'post-E', 'post-P', 'post-CS', and 'post-LS' are supported.")
     
     diff_scores[metric] = np.nan
 
@@ -354,6 +356,10 @@ def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, invert=
 
 # DimontRank algorithm
 def dimontrank(edges_diff, edge_metric, mode='abs'):
+    # Check for valid edge metric
+    if edge_metric not in ['pre-P', 'pre-E', 'pre-PE', 'pre-LS', 'pre-CS', 'int-IS']:
+        raise ValueError(f"DimontRank can only be applied with edge metrics 'pre-P', 'pre-E', 'pre-PE', 'pre-LS', 'pre-CS', or 'int-IS'. But '{edge_metric}' was provided.")
+    
     if mode == 'signed':
         edge_metric = edge_metric + '_signed'
 

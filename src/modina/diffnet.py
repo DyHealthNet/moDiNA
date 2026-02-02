@@ -403,8 +403,11 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
             raise ValueError(f"Invalid format {format}. Choose from 'csv' or 'graphml'.")
 
     if edge_metric is not None and edges_diff is not None:
-        edge_metric_signed = edge_metric + '_signed'
-        edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric, edge_metric_signed]]
+        if 'post' in edge_metric:
+            edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric]]
+        else:
+            edge_metric_signed = edge_metric + '_signed'
+            edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric, edge_metric_signed]]
     
     if node_metric is not None and nodes_diff is not None:
         nodes_diff = nodes_diff[[node_metric]]
@@ -545,7 +548,7 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame], edges_diff: Optional[pd.
 
 
 # Differential edge computation
-def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric: str = 'pre-P', max_path_length: int = 2) -> pd.DataFrame:
+def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric: str , max_path_length: int = 2) -> pd.DataFrame:
     """
     Compute differential edge scores based on the specified edge metric.
 
@@ -584,13 +587,34 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
 
     # Post-rescaled combined score (post-CS)
     elif edge_metric == 'post-CS':
+        # Compute combined score from raw effect size and p-value
+        scores1['raw-CS'] = scores1['raw-E'] - scores1['raw-P']
+        scores2['raw-CS'] = scores2['raw-E'] - scores2['raw-P']
+
         # Compute differences in edge metrics first
+        edges_diff = subtract_edges(scores1, scores2, metrics=['raw-CS'], included_cols=['test_type'])
+        # Min-Max rescaling
+        edges_diff = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
+
+    # Sum of pre-P and pre-E (pre-PE)
+    elif edge_metric == 'pre-PE':
+        # Compute 'pre-P' and 'pre-E'
+        edges_diff = subtract_edges(scores1, scores2, metrics=['pre-P', 'pre-E'], included_cols=['test_type'])
+        # Sum the two scores
+        edges_diff[edge_metric] = edges_diff['pre-P'] + edges_diff['pre-E']
+
+        # Compute the signed version
+        edges_diff['pre-PE_signed'] = (scores1['pre-P'] - scores2['pre-P']) + (scores1['pre-E'] - scores2['pre-E'])
+
+    # Sum of post-P and post-E (post-PE)
+    elif edge_metric == 'post-PE':
+        # Compute differences in raw association scores
         edges_diff = subtract_edges(scores1, scores2, metrics=['raw-P', 'raw-E'], included_cols=['test_type'])
-        # Rescale difference in effect sizes
+        # Rescale difference
         edges_diff = post_rescaling(diff_scores=edges_diff, metric='post-E')
         edges_diff = post_rescaling(diff_scores=edges_diff, metric='post-P')
-        # Compute combined score
-        edges_diff[edge_metric] = (edges_diff['post-E'] + edges_diff['post-P'])
+        # Sum the two scores
+        edges_diff[edge_metric] = edges_diff['post-P'] + edges_diff['post-E']
 
     # Integrated Interaction Score (int-IS)
     elif edge_metric == 'int-IS':
@@ -653,7 +677,7 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
         edges_diff = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
 
     else:
-        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'pre-P', 'pre-E', 'post-P', 'post-E', 'int-IS', 'pre-CS', 'post-CS', 'pre-LS' or 'post-LS'.")
+        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'pre-P', 'post-P', 'pre-E', 'post-E', 'pre-PE', 'post-PE', 'pre-CS', 'post-CS', 'pre-LS' or 'post-LS', int-IS'.")
 
     if edges_diff is None:
         # Compute difference in edge scores
