@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import napypi as napy
 import logging
+from typing import Optional
 
 EXCLUDED_EFFECTS = {'chi2', 't', 'F', 'U', 'H'}
 
@@ -14,7 +15,7 @@ def _df_to_numpy(df: pd.DataFrame):
     return df_np, cols
 
 
-def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str, file_name: str = None):
+def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str, file_name: Optional[str] = None) -> Optional[pd.DataFrame]:
     if not assoc_out:
         return None
 
@@ -88,6 +89,7 @@ def napy_cat_cat(cat_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_
     
     output = napy.chi_squared(discrete_phenotypes, axis=1, threads=num_workers, nan_value=nan_value, use_numba=False)
     results = _napy_formatting(output, [cols], 'chi2')
+    assert results is not None, "Results should not be None here."
 
     for col in results.columns:
         if "_e_" in col:
