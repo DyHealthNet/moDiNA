@@ -9,12 +9,12 @@ from modina.statistics_utils import *
 
 
 # Wrapper function to perform the whole moDiNA pipeline
-def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: str = 'pre-LS', node_metric: str = 'STC', ranking_alg: str = 'PageRank+',
+def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: Optional[str] = None, node_metric: Optional[str] = None, ranking_alg: str = 'PageRank+',
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
                      stc_test: str = 'mwu', max_path_length: int=2,
                      cont_cont: str = 'spearman', bi_cont: str = 'mwu', cont_cat: str = 'kruskal',
                      correction: str = 'bh', num_workers: int=1,
-                     project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, dict, pd.DataFrame, pd.DataFrame, dict]:
+                     project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, dict, Optional[pd.DataFrame], Optional[pd.DataFrame], dict]:
     """
     Wrapper function to perform an end-to-end differential network analysis following the moDiNA pipeline.
     
@@ -30,8 +30,8 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
     :param filter_metric: Edge metric used for filtering. Defaults to None.
     :param filter_rule: Rule to integrate the networks during filtering. Defaults to None.
-    :param edge_metric: Edge metric used to construct the differential network. Defaults to 'pre-LS'.
-    :param node_metric: Node metric used to construct the differential network. Defaults to 'STC'.
+    :param edge_metric: Edge metric used to construct the differential network.
+    :param node_metric: Node metric used to construct the differential network.
     :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'. Defaults to 'PageRank+'.
@@ -339,9 +339,9 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
 
 # Differential network computation
 def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
-                         edge_metric: str = 'pre-LS', node_metric: str = 'STC',
+                         edge_metric: Optional[str] = None, node_metric: Optional[str] = None,
                          stc_test: str = 'mwu', max_path_length: int = 2, correction: str = 'bh',
-                         path: Optional[str] = None, format: str = 'csv') -> Tuple[pd.DataFrame, pd.DataFrame]:
+                         path: Optional[str] = None, format: str = 'csv') -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """
     Computation of a differential network defined by a node metric and an edge metric.
     
@@ -349,8 +349,8 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param scores2: Statistical association scores of Context 2, rescaled and potentially filtered.
     :param context1: Observed data of Context 1, potentially filtered.
     :param context2: Observed data of Context 2, potentially filtered.
-    :param edge_metric: Edge metric used to construct the differential network. Defaults to 'pre-LS'.
-    :param node_metric: Node metric used to construct the differential network. Defaults to 'STC'.
+    :param edge_metric: Edge metric used to construct the differential network.
+    :param node_metric: Node metric used to construct the differential network.
     :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
@@ -358,6 +358,10 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param format: File format to save the differential network. Options are 'csv' and 'graphml'. Defaults to 'csv'.
     :return: A tuple (edges_diff, nodes_diff) containing the computed differential edges and nodes.
     """
+    if edge_metric is None and node_metric is None:
+        raise ValueError('Please provide at least one of edge_metric or node_metric to compute the differential network.')
+    edges_diff = None
+    nodes_diff = None
 
     # Rescaling
     if not 'pre-E' in scores1.columns or not 'pre-E' in scores2.columns:
@@ -366,39 +370,50 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
         scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-P')
 
     # Edges
-    edges_diff = _compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, max_path_length=max_path_length)
+    if edge_metric is not None:
+        edges_diff = _compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, max_path_length=max_path_length)
 
     # Nodes
-    nodes_diff = _compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
-                                     node_metric=node_metric, correction=correction, stc_test=stc_test)
+    if node_metric is not None:
+        nodes_diff = _compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
+                                         node_metric=node_metric, correction=correction, stc_test=stc_test)
 
     if path is not None:
         if format == 'csv':
-            file_path_edges = os.path.join(path, f'diff_edges.csv')
-            file_path_nodes = os.path.join(path, f'diff_nodes.csv')
-            
-            edges_diff.to_csv(file_path_edges)
-            nodes_diff.to_csv(file_path_nodes)
+            if edges_diff is not None:
+                file_path_edges = os.path.join(path, f'diff_edges.csv')
+                edges_diff.to_csv(file_path_edges)
+            if nodes_diff is not None:
+                file_path_nodes = os.path.join(path, f'diff_nodes.csv')
+                nodes_diff.to_csv(file_path_nodes)
 
         elif format == 'graphml':
+            if edges_diff is None:
+                raise ValueError("To save the differential network in 'graphml' format, please provide an 'edge_metric'.")
             file_path = os.path.join(path, f'diff_net.graphml')
             diff_net = nx.from_pandas_edgelist(edges_diff, 'label1', 'label2', edge_metric)
-            nx.set_node_attributes(diff_net, nodes_diff[node_metric].to_dict(), node_metric)
+
+            # Add node weights
+            if nodes_diff is not None:
+                nx.set_node_attributes(diff_net, nodes_diff[node_metric].to_dict(), node_metric)
 
             nx.write_graphml(diff_net, file_path)
 
         else:
             raise ValueError(f"Invalid format {format}. Choose from 'csv' or 'graphml'.")
 
-    edge_metric_signed = edge_metric + '_signed'
-    edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric, edge_metric_signed]]
-    nodes_diff = nodes_diff[[node_metric]]
+    if edge_metric is not None and edges_diff is not None:
+        edge_metric_signed = edge_metric + '_signed'
+        edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric, edge_metric_signed]]
+    
+    if node_metric is not None and nodes_diff is not None:
+        nodes_diff = nodes_diff[[node_metric]]
 
     return edges_diff, nodes_diff 
 
 
 # Ranking
-def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_alg: str,
+def compute_ranking(nodes_diff: Optional[pd.DataFrame], edges_diff: Optional[pd.DataFrame], ranking_alg: str,
                     path: Optional[str] = None, meta_file: Optional[pd.DataFrame] = None) -> Tuple[list, dict]:
     """
     Compute a ranking based on the specified ranking algorithm.
@@ -409,16 +424,25 @@ def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
     :param path: Optional path to save the ranking as a CSV file.
     """
+    if nodes_diff is not None:
+        node_metric = nodes_diff.columns[0]
+    else:
+        node_metric = None
 
-    node_metric = nodes_diff.columns[0]
-    edge_metric = edges_diff.columns[3]
+    if edges_diff is not None:
+        edge_metric = edges_diff.columns[3]
+    else:
+        edge_metric = None
 
     # Personalized PageRank
     if ranking_alg == 'PageRank+':
-        if node_metric == 'STC':
+        if nodes_diff is None or edges_diff is None:
+            raise ValueError("To compute 'PageRank+', please provide both 'nodes_diff' and 'edges_diff'.")
+        elif node_metric == 'STC':
             invert = True
         else:
             invert = False
+
         ranking_scores = pagerank(nodes_diff=nodes_diff, edges_diff=edges_diff,
                                 node_metric=node_metric, edge_metric=edge_metric,
                                 invert=invert, personalization=True)
@@ -426,22 +450,34 @@ def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_
 
     # PageRank
     elif ranking_alg == 'PageRank':
+        if edges_diff is None:
+            raise ValueError("To compute 'PageRank', please provide 'edges_diff'.")
+        
         ranking_scores = pagerank(edges_diff=edges_diff, edge_metric=edge_metric,
                                 personalization=False)
         ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # DimontRank with absolute difference
     elif ranking_alg == 'absDimontRank':
+        if edges_diff is None:
+            raise ValueError("To compute 'absDimontRank', please provide 'edges_diff'.")
+        
         ranking_scores = dimontrank(edges_diff=edges_diff, edge_metric=edge_metric, mode='abs')
         ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # DimontRank with signed difference
     elif ranking_alg == 'DimontRank':
+        if edges_diff is None:
+            raise ValueError("To compute 'DimontRank', please provide 'edges_diff'.")
+        
         ranking_scores = dimontrank(edges_diff=edges_diff, edge_metric=edge_metric, mode='signed')
         ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # Direct ranking based on node metric
     elif ranking_alg == 'direct_node':
+        if nodes_diff is None:
+            raise ValueError("To compute 'direct_node', please provide 'nodes_diff'.")
+        
         ranking_scores = nodes_diff[node_metric]
 
         if node_metric == 'STC':
@@ -450,6 +486,9 @@ def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_
             ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
     
     elif ranking_alg == 'direct_edge':
+        if edges_diff is None or edge_metric is None:
+            raise ValueError("To compute 'direct_edge', please provide 'edges_diff'.")
+        
         ranking_scores = edges_diff[['label1', 'label2', edge_metric]].copy()
         ranking_scores = ranking_scores.sort_values(by=edge_metric, ascending=False).reset_index(drop=True)
         ranks = ranking_scores[['label1', 'label2']].values.tolist()
@@ -464,21 +503,22 @@ def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_
     
     if ranking_alg != 'direct_edge':
         if meta_file is None:
-            raise ValueError("Please provide a 'meta_file' when requesting rankings per type.")
+            logging.warning('No meta_file was provided. Rankings per data type cannot be computed.')
         
-        meta_file = meta_file.set_index('label')
+        else: 
+            meta_file = meta_file.set_index('label')
 
-        for node in ranks:
-            node_type = meta_file.at[node, 'type']
+            for node in ranks:
+                node_type = meta_file.at[node, 'type']
 
-            if node_type == 'continuous':
-                rank_cont.append(node)
-            elif node_type == 'categorical':
-                rank_cat.append(node)
-            elif node_type == 'binary':
-                rank_bi.append(node)
-            else:
-                raise ValueError(f"Invalid node type '{node_type}' for node '{node}' in meta_file.")
+                if node_type == 'continuous':
+                    rank_cont.append(node)
+                elif node_type == 'categorical':
+                    rank_cat.append(node)
+                elif node_type == 'binary':
+                    rank_bi.append(node)
+                else:
+                    raise ValueError(f"Invalid node type '{node_type}' for node '{node}' in meta_file.")
     
     else:
         logging.info('Ranking per type is not available for direct_edge ranking algorithm.')
@@ -488,7 +528,7 @@ def compute_ranking(nodes_diff: pd.DataFrame, edges_diff: pd.DataFrame, ranking_
         ranking_df = ranking_df.sort_values("node")
         ranking_df.to_csv(path, index=False)
 
-        if ranking_alg != 'direct_edge':
+        if ranking_alg != 'direct_edge' and meta_file is not None:
             rank_cont_df = pd.DataFrame({"node": rank_cont, "rank": range(1, len(rank_cont) + 1)})
             rank_cat_df = pd.DataFrame({"node": rank_cat, "rank": range(1, len(rank_cat) + 1)})
             rank_bi_df = pd.DataFrame({"node": rank_bi, "rank": range(1, len(rank_bi) + 1)})
@@ -517,13 +557,6 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
     """
 
     edges_diff = None
-
-    if edge_metric is None:
-        # TODO: rethink this warning, maybe moDiNA should also run without computing an edge metric
-        logging.warning('No edge_metric was specified. This setting should only be applied for direct node rankings. pre-P will now be computed to enable other rankings.')
-        # Take pre-P per default
-        edges_diff = subtract_edges(scores1, scores2,
-                                            metrics=['pre-P'], included_cols=('test_type',))
 
     # Pre-rescaled effect size (pre-E) or rescaled multiple-testing adjusted p-value (pre-P)
     if edge_metric == 'pre-P' or edge_metric == 'pre-E':
@@ -648,10 +681,6 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
     assert context1.columns.equals(context2.columns), 'Context a and b need to have the same structure.'
 
     nodes_diff = None
-
-    if node_metric is None:
-        logging.warning('No node_metric was specified. This setting will only work for the PageRank and DimontRank algorithm.')
-        nodes_diff = subtract_nodes(context1=context1, context2=context2, test=False)
 
     # Statistical test centrality (STC)
     if node_metric == 'STC':
