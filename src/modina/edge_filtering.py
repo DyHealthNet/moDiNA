@@ -9,7 +9,6 @@ import numpy as np
 
 
 # Edge filtering
-# TODO: filtering on unscaled scores? absolute effect sizes? per effect size type? only p-values? 
 def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
            filter_method: Optional[str] = None, filter_param: float = 0.0,
            filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
@@ -52,32 +51,41 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     # Set sorting order based on filter metric
     ascending = True if filter_metric == 'pre-P' else False
 
-    # Compute filtering threshold according to the specified method
+    # Compute number of edges according to the specified method
     threshold1 = None
     threshold2 = None
     n_nodes = context1.shape[1]
     n_edges_before = scores1.shape[0]
 
-    if filter_method == 'threshold':
-        threshold1 = threshold2 = filter_param
+    if filter_method == 'quantile':
+        if filter_param <= 0.0 or filter_param > 1.0:
+            raise ValueError("For 'quantile' filtering, 'filter_param' must be between 0 and 1.")
+        
+        n_filtered_edges = math.ceil(filter_param * n_edges_before)
 
     elif filter_method == 'degree':
         degree = filter_param
-        n_filtered_edges = math.ceil(degree * n_nodes / 2)
 
-        threshold1 = scores1[filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
-        threshold2 = scores2[filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
+        if degree < 1 or degree >= n_nodes:
+            raise ValueError(f"For 'degree' filtering, 'filter_param' must be between 1 and {n_nodes - 1}.")
+        
+        n_filtered_edges = math.ceil(degree * n_nodes / 2)
 
     elif filter_method == 'density':
         density = filter_param
+
+        if density <= 0.0 or density > 1.0:
+            raise ValueError("For 'density' filtering, 'filter_param' must be between 0 and 1.")
+        
         possible_edges = n_nodes * (n_nodes - 1) / 2
         n_filtered_edges = math.ceil(density * possible_edges)
 
-        threshold1 = scores1[filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
-        threshold2 = scores2[filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
-
     else:
-        raise ValueError(f"Invalid filtering method '{filter_method}'. Choose from: 'threshold', 'degree' or 'density'")
+        raise ValueError(f"Invalid filtering method '{filter_method}'. Choose from: 'quantile', 'degree' or 'density'")
+
+    # Set threshold
+    threshold1 = scores1[filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
+    threshold2 = scores2[filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
 
     # Apply the filtering threshold to scores and raw data if provided
     if filter_rule == 'union':
