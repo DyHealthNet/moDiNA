@@ -92,51 +92,99 @@ def simulate_copula(path=None, name1='context1', name2='context2',
 
     # Introduce fixed correlations in context 1 (leave context 2 uncorrelated)
     for _ in range(n_corr_cont_cont):
-        node_pair, corr1, _, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, _, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont)
+        else:
+            node_pair, corr2, _, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_cont=normal_nodes_cont)
         corr_nodes.append(node_pair)
 
     for _ in range(n_corr_bi_bi):
-        node_pair, corr1, normal_nodes_bi, _, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, normal_nodes_bi, _, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi)
+        else:
+            node_pair, corr2, normal_nodes_bi, _, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_bi=normal_nodes_bi)
         corr_nodes.append(node_pair)
 
     for _ in range(n_corr_cat_cat):
-        node_pair, corr1, _, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cat=normal_nodes_cat)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, _, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cat=normal_nodes_cat)
+        else:
+            node_pair, corr2, _, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_cat=normal_nodes_cat)
         corr_nodes.append(node_pair)
 
     for _ in range(n_corr_bi_cont):
-        node_pair, corr1, normal_nodes_bi, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, normal_nodes_bi, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
+        else:
+            node_pair, corr2, normal_nodes_bi, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
         corr_nodes.append(node_pair)
 
     for _ in range(n_corr_bi_cat):
-        node_pair, corr1, normal_nodes_bi, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cat=normal_nodes_cat)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, normal_nodes_bi, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cat=normal_nodes_cat)
+        else:
+            node_pair, corr2, normal_nodes_bi, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_bi=normal_nodes_bi, normal_nodes_cat=normal_nodes_cat)
         corr_nodes.append(node_pair)
 
     for _ in range(n_corr_cont_cat):
-        node_pair, corr1, _, normal_nodes_cont, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, _, normal_nodes_cont, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
+        else:
+            node_pair, corr2, _, normal_nodes_cont, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
         corr_nodes.append(node_pair)
 
     for _ in range(n_both_cont_cont):
-        node_pair, corr1, _, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, _, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont)
+        else:
+            node_pair, corr2, _, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_cont=normal_nodes_cont)
         shift_corr_nodes.append(node_pair)
 
     for _ in range(n_both_bi_bi):
-        node_pair, corr1, normal_nodes_bi, _, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, normal_nodes_bi, _, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi)
+        else:
+            node_pair, corr2, normal_nodes_bi, _, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_bi=normal_nodes_bi)
         shift_corr_nodes.append(node_pair)
 
     for _ in range(n_both_cat_cat):
-        node_pair, corr1, _, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cat=normal_nodes_cat)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, _, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cat=normal_nodes_cat)
+        else:
+            node_pair, corr2, _, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_cat=normal_nodes_cat)
         shift_corr_nodes.append(node_pair)
 
     for _ in range(n_both_bi_cont):
-        node_pair, corr1, normal_nodes_bi, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, normal_nodes_bi, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
+        else:
+            node_pair, corr2, normal_nodes_bi, normal_nodes_cont, _ = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
         shift_corr_nodes.append(node_pair)
 
     for _ in range(n_both_bi_cat):
-        node_pair, corr1, normal_nodes_bi, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cat=normal_nodes_cat)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, normal_nodes_bi, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_bi=normal_nodes_bi, normal_nodes_cat=normal_nodes_cat)
+        else:
+            node_pair, corr2, normal_nodes_bi, _, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_bi=normal_nodes_bi, normal_nodes_cat=normal_nodes_cat)
         shift_corr_nodes.append(node_pair)
 
     for _ in range(n_both_cont_cat):
-        node_pair, corr1, _, normal_nodes_cont, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
+        which = random.choice([1, 2])
+        if which == 1:
+            node_pair, corr1, _, normal_nodes_cont, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr1, normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
+        else:
+            node_pair, corr2, _, normal_nodes_cont, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix=corr2, normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
         shift_corr_nodes.append(node_pair)
 
     # Randomly select nodes for mean shifts
