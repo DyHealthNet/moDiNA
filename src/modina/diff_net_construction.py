@@ -114,7 +114,7 @@ def calculate_interaction_score(data, max_path_length=3, metric='pre-E'):
         num_paths = [0] * max_path_length
 
         # Find all paths between the two extracted nodes and loop through them
-        simple_paths = graph.get_all_simple_paths(edge[0], edge[1], cutoff=max_path_length)
+        simple_paths = graph.get_all_simple_paths(edge[0], edge[1], maxlen=max_path_length)
         for path in simple_paths:
             # Get path length
             path_length = len(path) - 1

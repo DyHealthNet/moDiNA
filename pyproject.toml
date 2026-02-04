@@ -19,7 +19,7 @@ numpy = ">=1.26.4"
 pandas = ">=2.2.3"
 scipy = ">=1.11.0"
 networkx = ">=3.5"
-igraph = ">=0.11.9"
+igraph = ">=1.0.0"
 napypi = "^1.0.1"
 
 [tool.poetry.urls]
