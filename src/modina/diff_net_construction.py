@@ -15,7 +15,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
                          edge_metric: Optional[str] = None, node_metric: Optional[str] = None,
                          max_path_length: int = 2, correction: str = 'bh',
                          path: Optional[str] = None, format: str = 'csv',
-                         meta_file: Optional[pd.DataFrame] = None) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+                         meta_file: Optional[pd.DataFrame] = None, bi_cont: str = 'mwu') -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """
     Computation of a differential network defined by a node metric and an edge metric.
     
@@ -30,6 +30,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param path: Optional path to save the differential scores as CSV files. Defaults to None.
     :param format: File format to save the differential network. Options are 'csv' and 'graphml'. Defaults to 'csv'.
     :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
+    :param bi_cont: Test for continuous nodes used in the computation of the 'STC' node metric. Defaults to 'mwu'.
     :return: A tuple (edges_diff, nodes_diff) containing the computed differential edges and nodes.
     """
     if edge_metric is None and node_metric is None:
@@ -49,14 +50,8 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
 
     # Nodes
     if node_metric is not None:
-        if node_metric == 'STC' and meta_file is None:
-            raise ValueError("To compute the 'STC' node metric, please provide a 'meta_file' containing the node types.")
-        elif node_metric == 'STC' and meta_file is not None:
-            nodes_diff = _compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
-                                             node_metric=node_metric, correction=correction, meta_file=meta_file)
-        else:
-            nodes_diff = _compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
-                                             node_metric=node_metric, correction=correction)
+        nodes_diff = _compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
+                                         node_metric=node_metric, correction=correction, meta_file=meta_file, bi_cont=bi_cont)
 
     if path is not None:
         if format == 'csv':
@@ -96,7 +91,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
 
 
 # Adjusted DrDimont implementation to compute integrated interaction scores
-def calculate_interaction_score(data, max_path_length=3, metric='pre-E'):
+def interaction_score(data, max_path_length=3, metric='pre-E'):
     if max_path_length >= 5:
         raise ValueError('The maximum path length considered in interaction scores has to be smaller than 5.')
     data_extended = data.copy()
@@ -145,7 +140,7 @@ def calculate_interaction_score(data, max_path_length=3, metric='pre-E'):
 
 
 # Calculate differential (weighted) degree centralities
-def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='pre-P', weighted=False):
+def degree_centrality(nodes_diff, scores1, scores2, metric='pre-P', weighted=False):
     if weighted:
         if metric == 'pre-P':
             scores1['pre-P_inverted'] = 1 - scores1[metric]
@@ -228,16 +223,14 @@ def calculate_degree_centrality(nodes_diff, scores1, scores2, metric='pre-P', we
     if max2 == 0.:
         max2 = 1.
 
-    # (Absolute) difference
-    #method_signed = method + '_signed'
-    #nodes_diff[method_signed] = (degree_centrality['context_a'] / max1) - (degree_centrality['context_b'] / max2)
+    # Absolute difference
     nodes_diff[method] = abs((degree_centrality['context_a'] / max1) - (degree_centrality['context_b'] / max2))
 
     return nodes_diff
 
 
 # Compute differential PageRank centrality
-def calculate_pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E'):
+def pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E'):
     scores1 = scores1.copy()
     scores2 = scores2.copy()
 
@@ -266,6 +259,71 @@ def calculate_pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E'):
     nodes_diff[method] = nodes_diff.index.map(
         lambda node: abs((ranking1.get(node, 0) / max1) - (ranking2.get(node, 0) / max2))
     )
+
+    return nodes_diff
+
+
+# Compute absolute mean difference and statistical significance for each node between two contexts
+def stat_test_centrality(context1, context2, meta_file, correction='bh', bi_cont='mwu'):
+    if not context1.columns.equals(context2.columns):
+        raise ValueError('Context a and b need to have the same structure.')
+
+    # Initialize nodes_diff DataFrame
+    nodes = context1.columns
+    nodes_diff = pd.DataFrame(index=nodes)
+    nodes_diff['test_p'] = 1.0
+    nodes_diff['STC'] = 1.0
+
+    # Initialize p-values and STC column in nodes_diff
+    p_cat = {}
+    p_bi = {}
+    p_cont = {}
+
+    # Separate node types
+    cat1, cont1, bi1 = _separate_types(context1, meta_file)
+    cat2, cont2, bi2 = _separate_types(context2, meta_file)
+    assert cat1.columns.equals(cat2.columns) and cont1.columns.equals(cont2.columns) and bi1.columns.equals(bi2.columns), 'Context a and b need to have the same structure.'
+
+    # categorical
+    for node in cat1.columns:
+        table = pd.crosstab(cat1[node], cat2[node])
+        p_cat[node] = sc.chi2_contingency(table).pvalue
+
+    # binary
+    for node in bi1.columns:
+        table = pd.crosstab(bi1[node], bi2[node])
+        p_bi[node] = sc.chi2_contingency(table).pvalue
+
+    # continuous
+    for node in cont1.columns:
+        if bi_cont == 'mwu':
+            p_cont[node] = sc.mannwhitneyu(cont1[node], cont2[node], nan_policy='omit').pvalue
+        elif bi_cont == 'ttest':
+            p_cont[node] = sc.ttest_ind(cont1[node], cont2[node], nan_policy='omit').pvalue
+        else:
+            raise ValueError(f"Invalid test type '{bi_cont}' for comparing continuous variables across contexts using the STC metric. Choose from 'mwu' or 'ttest'.")
+
+    if p_cat:
+        pvals = pd.Series(p_cat)
+        stc = sc.false_discovery_control(pvals, method=correction)
+        nodes_diff.loc[pvals.index, 'test_p'] = pvals
+        nodes_diff.loc[pvals.index, 'STC'] = stc
+
+    if p_bi:
+        pvals = pd.Series(p_bi)
+        stc = sc.false_discovery_control(pvals, method=correction)
+        nodes_diff.loc[pvals.index, 'test_p'] = pvals
+        nodes_diff.loc[pvals.index, 'STC'] = stc
+
+    if p_cont:
+        pvals = pd.Series(p_cont)
+        stc = sc.false_discovery_control(pvals, method=correction)
+        nodes_diff.loc[pvals.index, 'test_p'] = pvals
+        nodes_diff.loc[pvals.index, 'STC'] = stc
+
+    # In case a test failed and returned NaN, set p-value to 1.0
+    nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
+    nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
 
     return nodes_diff
 
@@ -342,8 +400,8 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
     # Integrated Interaction Score (int-IS)
     elif edge_metric == 'int-IS':
         # Compute interaction score using DrDimont method
-        scores1 = calculate_interaction_score(scores1, metric='pre-E', max_path_length=max_path_length)
-        scores2 = calculate_interaction_score(scores2, metric='pre-E', max_path_length=max_path_length)
+        scores1 = interaction_score(scores1, metric='pre-E', max_path_length=max_path_length)
+        scores2 = interaction_score(scores2, metric='pre-E', max_path_length=max_path_length)
     
     # Log-transformed p-value and pre-rescaled effect size combined score (pre-LS)
     elif edge_metric == 'pre-LS':
@@ -411,7 +469,7 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
 
 # Differential node computation
 def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
-                        node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                        node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None, bi_cont: str = 'mwu') -> pd.DataFrame:
     """
     Compute differential node scores based on the specified node metric.
 
@@ -422,56 +480,53 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
     :param node_metric: Node metric to compute the differential node scores.
     :param correction: Correction method for multiple testing. Only needed if node_metric is 'STC'. Defaults to 'bh'.
     :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
+    :param bi_cont: Statistical test to compare continuous variables across contexts for the 'STC' node metric. Choose from 'mwu' or 'ttest'. Defaults to 'mwu'.
     :return: A DataFrame containing the computed differential node scores.
     """
 
     assert context1.columns.equals(context2.columns), 'Context a and b need to have the same structure.'
 
-    nodes_diff = None
+    nodes = context1.columns
+    nodes_diff = pd.DataFrame(index=nodes)
 
-    # TODO: change implementation so that other metrics do not need the _subtract_nodes function
     # Statistical test centrality (STC)
     if node_metric == 'STC':
-        nodes_diff = _subtract_nodes(context1=context1, context2=context2, test=True, correction=correction, meta_file=meta_file)
+        if meta_file is None:
+            raise ValueError("To compute the 'STC' node metric, please provide a 'meta_file' containing the node types.")
+        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, meta_file=meta_file, bi_cont=bi_cont)
 
     # Degree centrality based on pre-P (DC-P)
     elif node_metric == 'DC-P':
-        nodes_diff = _subtract_nodes(context1=context1, context2=context2, test=False)
-        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, weighted=False,
+        nodes_diff = degree_centrality(nodes_diff=nodes_diff, weighted=False,
                                                  scores1=scores1, scores2=scores2,
                                                  metric='pre-P')
 
     # Degree centrality based on pre-E (DC-E)
     elif node_metric == 'DC-E':
-        nodes_diff = _subtract_nodes(context1=context1, context2=context2, test=False)
-        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, weighted=False,
+        nodes_diff = degree_centrality(nodes_diff=nodes_diff, weighted=False,
                                                  scores1=scores1, scores2=scores2,
                                                  metric='pre-E')
 
     # Weighted degree centrality based on pre-P (WDC-P)
     elif node_metric == 'WDC-P':
-        nodes_diff = _subtract_nodes(context1=context1, context2=context2, test=False)
-        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, weighted=True,
+        nodes_diff = degree_centrality(nodes_diff=nodes_diff, weighted=True,
                                                  scores1=scores1, scores2=scores2,
                                                  metric='pre-P')
 
     # Weighted degree centrality based on pre-E (WDC-E)
     elif node_metric == 'WDC-E':
-        nodes_diff = _subtract_nodes(context1=context1, context2=context2, test=False)
-        nodes_diff = calculate_degree_centrality(nodes_diff=nodes_diff, weighted=True,
+        nodes_diff = degree_centrality(nodes_diff=nodes_diff, weighted=True,
                                                  scores1=scores1, scores2=scores2,
                                                  metric='pre-E')
 
     # PageRank centrality based on pre-E (PRC-E)
     elif node_metric == 'PRC-E':
-        nodes_diff = _subtract_nodes(context1=context1, context2=context2, test=False)
-        nodes_diff = calculate_pagerank_centrality(nodes_diff=nodes_diff, metric='pre-E',
+        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, metric='pre-E',
                                                    scores1=scores1, scores2=scores2)
     
     # PageRank centrality based on pre-P (PRC-P)
     elif node_metric == 'PRC-P':
-        nodes_diff = _subtract_nodes(context1=context1, context2=context2, test=False)
-        nodes_diff = calculate_pagerank_centrality(nodes_diff=nodes_diff, metric='pre-P',
+        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, metric='pre-P',
                                                    scores1=scores1, scores2=scores2)
 
     else:
@@ -498,71 +553,3 @@ def _subtract_edges(scores1, scores2, metrics, included_cols=None):
 
     return edges_diff
 
-
-# Compute absolute mean difference and statistical significance for each node between two contexts
-def _subtract_nodes(context1, context2, test=True, correction='bh', meta_file=None):
-    if not context1.columns.equals(context2.columns):
-        raise ValueError('Context a and b need to have the same structure.')
-
-    # Absolute mean difference
-    nodes = context1.columns
-    nodes_diff = pd.DataFrame(abs(context1.mean(axis=0) - context2.mean(axis=0)),
-                              columns=['diff_mean'], index=nodes)
-
-    # Perform statistical test if specified
-    if test is True:
-        if meta_file is None:
-            raise ValueError("To perform statistical testing for the 'STC' node metric, please provide a 'meta_file' containing the node types.")
-        
-        # Separate node types
-        cat1, cont1, bi1 = _separate_types(context1, meta_file)
-        cat2, cont2, bi2 = _separate_types(context2, meta_file)
-        assert cat1.columns.equals(cat2.columns) and cont1.columns.equals(cont2.columns) and bi1.columns.equals(bi2.columns), 'Context a and b need to have the same structure.'
-
-        p_cat = {}
-        p_bi = {}
-        p_cont = {}
-
-        # Initialize p-values and STC column in nodes_diff
-        nodes_diff['test_p'] = 1.0
-        nodes_diff['STC'] = 1.0
-
-        # categorical
-        for node in cat1.columns:
-            table = pd.crosstab(cat1[node], cat2[node])
-            p_cat[node] = sc.chi2_contingency(table).pvalue
-
-        # binary
-        for node in bi1.columns:
-            table = pd.crosstab(bi1[node], bi2[node])
-            p_bi[node] = sc.chi2_contingency(table).pvalue
-
-        # continuous
-        for node in cont1.columns:
-            p_cont[node] = sc.mannwhitneyu(
-                cont1[node], cont2[node], nan_policy='omit'
-            ).pvalue
-
-        if p_cat:
-            pvals = pd.Series(p_cat)
-            stc = sc.false_discovery_control(pvals, method=correction)
-            nodes_diff.loc[pvals.index, 'test_p'] = pvals
-            nodes_diff.loc[pvals.index, 'STC'] = stc
-
-        if p_bi:
-            pvals = pd.Series(p_bi)
-            stc = sc.false_discovery_control(pvals, method=correction)
-            nodes_diff.loc[pvals.index, 'test_p'] = pvals
-            nodes_diff.loc[pvals.index, 'STC'] = stc
-
-        if p_cont:
-            pvals = pd.Series(p_cont)
-            stc = sc.false_discovery_control(pvals, method=correction)
-            nodes_diff.loc[pvals.index, 'test_p'] = pvals
-            nodes_diff.loc[pvals.index, 'STC'] = stc
-
-        # In case a test failed and returned NaN, set p-value to 1.0
-        nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
-        nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
-
-    return nodes_diff

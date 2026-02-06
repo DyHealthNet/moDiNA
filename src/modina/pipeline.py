@@ -84,7 +84,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
                                                   max_path_length=max_path_length,
                                                   correction=correction,
                                                   path=project_path, format='csv',
-                                                  meta_file=meta_file)
+                                                  meta_file=meta_file, bi_cont=bi_cont)
     logging.info('Done.')
 
     # Ranking
