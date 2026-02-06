@@ -1,4 +1,5 @@
 from modina.statistics_utils import *
+from modina.context_net_inference import _separate_types
 
 import os
 from typing import Optional, Tuple
@@ -12,8 +13,9 @@ import scipy.stats as sc
 # Differential network computation
 def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
                          edge_metric: Optional[str] = None, node_metric: Optional[str] = None,
-                         stc_test: str = 'mwu', max_path_length: int = 2, correction: str = 'bh',
-                         path: Optional[str] = None, format: str = 'csv') -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+                         max_path_length: int = 2, correction: str = 'bh',
+                         path: Optional[str] = None, format: str = 'csv',
+                         meta_file: Optional[pd.DataFrame] = None) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """
     Computation of a differential network defined by a node metric and an edge metric.
     
@@ -23,11 +25,11 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param context2: Observed data of Context 2, potentially filtered.
     :param edge_metric: Edge metric used to construct the differential network.
     :param node_metric: Node metric used to construct the differential network.
-    :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param path: Optional path to save the differential scores as CSV files. Defaults to None.
     :param format: File format to save the differential network. Options are 'csv' and 'graphml'. Defaults to 'csv'.
+    :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
     :return: A tuple (edges_diff, nodes_diff) containing the computed differential edges and nodes.
     """
     if edge_metric is None and node_metric is None:
@@ -47,8 +49,14 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
 
     # Nodes
     if node_metric is not None:
-        nodes_diff = _compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
-                                         node_metric=node_metric, correction=correction, stc_test=stc_test)
+        if node_metric == 'STC' and meta_file is None:
+            raise ValueError("To compute the 'STC' node metric, please provide a 'meta_file' containing the node types.")
+        elif node_metric == 'STC' and meta_file is not None:
+            nodes_diff = _compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
+                                             node_metric=node_metric, correction=correction, meta_file=meta_file)
+        else:
+            nodes_diff = _compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
+                                             node_metric=node_metric, correction=correction)
 
     if path is not None:
         if format == 'csv':
@@ -403,7 +411,7 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
 
 # Differential node computation
 def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
-                        node_metric: str, correction: str = 'bh', stc_test: str = 'mwu') -> pd.DataFrame:
+                        node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """
     Compute differential node scores based on the specified node metric.
 
@@ -413,7 +421,7 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
     :param context2: Observed data of Context 2, potentially filtered.
     :param node_metric: Node metric to compute the differential node scores.
     :param correction: Correction method for multiple testing. Only needed if node_metric is 'STC'. Defaults to 'bh'.
-    :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
+    :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
     :return: A DataFrame containing the computed differential node scores.
     """
 
@@ -421,9 +429,10 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
 
     nodes_diff = None
 
+    # TODO: change implementation so that other metrics do not need the _subtract_nodes function
     # Statistical test centrality (STC)
     if node_metric == 'STC':
-        nodes_diff = _subtract_nodes(context1=context1, context2=context2, test=True, test_type=stc_test, correction=correction)
+        nodes_diff = _subtract_nodes(context1=context1, context2=context2, test=True, correction=correction, meta_file=meta_file)
 
     # Degree centrality based on pre-P (DC-P)
     elif node_metric == 'DC-P':
@@ -491,29 +500,69 @@ def _subtract_edges(scores1, scores2, metrics, included_cols=None):
 
 
 # Compute absolute mean difference and statistical significance for each node between two contexts
-def _subtract_nodes(context1, context2, test=True, test_type='ttest', correction='bh'):
+def _subtract_nodes(context1, context2, test=True, correction='bh', meta_file=None):
     if not context1.columns.equals(context2.columns):
         raise ValueError('Context a and b need to have the same structure.')
 
-    nodes = context1.columns
-
     # Absolute mean difference
+    nodes = context1.columns
     nodes_diff = pd.DataFrame(abs(context1.mean(axis=0) - context2.mean(axis=0)),
                               columns=['diff_mean'], index=nodes)
 
     # Perform statistical test if specified
     if test is True:
-        for node in nodes:
-            if test_type == 'ttest':
-                result = sc.ttest_ind(context1[node], context2[node], nan_policy='omit')
-            elif test_type == 'mwu':
-                result = sc.mannwhitneyu(context1[node], context2[node], nan_policy='omit')
-            else:
-                raise ValueError(f"Invalid test_type '{test_type}'. Choose from 'ttest' or 'mwu'.")
+        if meta_file is None:
+            raise ValueError("To perform statistical testing for the 'STC' node metric, please provide a 'meta_file' containing the node types.")
+        
+        # Separate node types
+        cat1, cont1, bi1 = _separate_types(context1, meta_file)
+        cat2, cont2, bi2 = _separate_types(context2, meta_file)
+        assert cat1.columns.equals(cat2.columns) and cont1.columns.equals(cont2.columns) and bi1.columns.equals(bi2.columns), 'Context a and b need to have the same structure.'
 
-            nodes_diff.loc[node, 'test_p'] = result.pvalue
+        p_cat = {}
+        p_bi = {}
+        p_cont = {}
 
+        # Initialize p-values and STC column in nodes_diff
+        nodes_diff['test_p'] = 1.0
+        nodes_diff['STC'] = 1.0
+
+        # categorical
+        for node in cat1.columns:
+            table = pd.crosstab(cat1[node], cat2[node])
+            p_cat[node] = sc.chi2_contingency(table).pvalue
+
+        # binary
+        for node in bi1.columns:
+            table = pd.crosstab(bi1[node], bi2[node])
+            p_bi[node] = sc.chi2_contingency(table).pvalue
+
+        # continuous
+        for node in cont1.columns:
+            p_cont[node] = sc.mannwhitneyu(
+                cont1[node], cont2[node], nan_policy='omit'
+            ).pvalue
+
+        if p_cat:
+            pvals = pd.Series(p_cat)
+            stc = sc.false_discovery_control(pvals, method=correction)
+            nodes_diff.loc[pvals.index, 'test_p'] = pvals
+            nodes_diff.loc[pvals.index, 'STC'] = stc
+
+        if p_bi:
+            pvals = pd.Series(p_bi)
+            stc = sc.false_discovery_control(pvals, method=correction)
+            nodes_diff.loc[pvals.index, 'test_p'] = pvals
+            nodes_diff.loc[pvals.index, 'STC'] = stc
+
+        if p_cont:
+            pvals = pd.Series(p_cont)
+            stc = sc.false_discovery_control(pvals, method=correction)
+            nodes_diff.loc[pvals.index, 'test_p'] = pvals
+            nodes_diff.loc[pvals.index, 'STC'] = stc
+
+        # In case a test failed and returned NaN, set p-value to 1.0
         nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
-        nodes_diff['STC'] = sc.false_discovery_control(nodes_diff['test_p'], method=correction)
+        nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
 
     return nodes_diff
