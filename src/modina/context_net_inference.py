@@ -22,7 +22,7 @@ def calculate_association_scores(cat_data, cont_data, bi_data, tests, num_worker
     cont_cat_results = napy_cat_cont(cont_data, cat_data, test=tests.get('cont_cat'), num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-categorical score creation")
 
-    bi_cont_results = napy_binary_cat_cont(cont_data, bi_data, test=tests.get('bi_cont'), num_workers=num_workers, nan_value=nan_value)
+    bi_cont_results = napy_bi_cont(cont_data, bi_data, test=tests.get('bi_cont'), num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-binary score creation")
 
     cat_cat_results = napy_cat_cat(cat_data, bi_data, num_workers=num_workers, nan_value=nan_value)
@@ -150,7 +150,7 @@ def napy_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, t
     return [_napy_formatting(cont_out, [cat_cols, cont_cols], done_test)]
 
 
-def napy_binary_cat_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
+def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
     """
     Do binary categorical-continuous association testing of binary categorical variables with continuous variables.
     As the binary categorical variables can be seen as a special case of the categorical variables, this function

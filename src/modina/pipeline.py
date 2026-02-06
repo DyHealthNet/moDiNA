@@ -12,8 +12,7 @@ import pandas as pd
 
 # Wrapper function to perform the whole moDiNA pipeline
 def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: Optional[str] = None, node_metric: Optional[str] = None, ranking_alg: str = 'PageRank+',
-                     filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
-                     stc_test: str = 'mwu', max_path_length: int=2,
+                     filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None, max_path_length: int=2,
                      cont_cont: str = 'spearman', bi_cont: str = 'mwu', cont_cat: str = 'kruskal',
                      correction: str = 'bh', num_workers: int=1,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, dict, Optional[pd.DataFrame], Optional[pd.DataFrame], dict]:
@@ -34,7 +33,6 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param filter_rule: Rule to integrate the networks during filtering. Defaults to None.
     :param edge_metric: Edge metric used to construct the differential network.
     :param node_metric: Node metric used to construct the differential network.
-    :param stc_test: Statistical test to use for significance testing in STC node metric. Defaults to 'mwu'.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'. Defaults to 'PageRank+'.
     :param name1: Name of Context 1. Used for saving files. Defaults to 'context1'.
@@ -83,9 +81,10 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     edges_diff, nodes_diff = compute_diff_network(scores1=scores1_filtered, scores2=scores2_filtered,
                                                   context1=context1_filtered, context2=context2_filtered,
                                                   edge_metric=edge_metric, node_metric=node_metric,
-                                                  stc_test=stc_test, max_path_length=max_path_length,
+                                                  max_path_length=max_path_length,
                                                   correction=correction,
-                                                  path=project_path, format='csv')
+                                                  path=project_path, format='csv',
+                                                  meta_file=meta_file, bi_cont=bi_cont)
     logging.info('Done.')
 
     # Ranking
@@ -111,8 +110,6 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         'ranking_alg': ranking_alg
     }
 
-    if node_metric == 'STC':
-        params['stc_test'] = stc_test
     if edge_metric == 'int-IS':
         params['max_path_length'] = max_path_length
 

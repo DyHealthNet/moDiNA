@@ -33,14 +33,10 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame], edges_diff: Optional[pd.
     if ranking_alg == 'PageRank+':
         if nodes_diff is None or edges_diff is None:
             raise ValueError("To compute 'PageRank+', please provide both 'nodes_diff' and 'edges_diff'.")
-        elif node_metric == 'STC':
-            invert = True
-        else:
-            invert = False
 
         ranking_scores = pagerank(nodes_diff=nodes_diff, edges_diff=edges_diff,
-                                node_metric=node_metric, edge_metric=edge_metric,
-                                invert=invert, personalization=True)
+                                  node_metric=node_metric, edge_metric=edge_metric,
+                                  personalization=True)
         ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # PageRank
@@ -74,11 +70,7 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame], edges_diff: Optional[pd.
             raise ValueError("To compute 'direct_node', please provide 'nodes_diff'.")
 
         ranking_scores = nodes_diff[node_metric]
-
-        if node_metric == 'STC':
-            ranks = pd.Series(ranking_scores).sort_values(ascending=True).index.tolist()
-        else:
-            ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
+        ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     elif ranking_alg == 'direct_edge':
         if edges_diff is None or edge_metric is None:
@@ -140,7 +132,7 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame], edges_diff: Optional[pd.
 
 
 # PageRank algorithm
-def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, invert=False, personalization=True):
+def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, personalization=True):
     edges_diff = edges_diff.copy()
     edges_diff['weight'] = edges_diff[edge_metric]
 
@@ -153,10 +145,7 @@ def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, invert=
             raise ValueError('When personalization should be used, nodes_diff and node_metric must be provided.')
 
         nodes_diff = nodes_diff.copy()
-        if invert is True:
-            nodes_diff['weight'] = 1 - nodes_diff[node_metric]
-        else:
-            nodes_diff['weight'] = nodes_diff[node_metric]
+        nodes_diff['weight'] = nodes_diff[node_metric]
 
         # Apply PageRank with personalization
         if (nodes_diff['weight'].nunique() == 1):
