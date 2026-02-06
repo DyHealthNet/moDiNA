@@ -272,7 +272,7 @@ def stat_test_centrality(context1, context2, meta_file, correction='bh', bi_cont
     nodes = context1.columns
     nodes_diff = pd.DataFrame(index=nodes)
     nodes_diff['test_p'] = 1.0
-    nodes_diff['STC'] = 1.0
+    nodes_diff['STC'] = 0.0
 
     # Initialize p-values and STC column in nodes_diff
     p_cat = {}
@@ -307,23 +307,23 @@ def stat_test_centrality(context1, context2, meta_file, correction='bh', bi_cont
         pvals = pd.Series(p_cat)
         stc = sc.false_discovery_control(pvals, method=correction)
         nodes_diff.loc[pvals.index, 'test_p'] = pvals
-        nodes_diff.loc[pvals.index, 'STC'] = stc
+        nodes_diff.loc[pvals.index, 'STC'] = 1 - stc
 
     if p_bi:
         pvals = pd.Series(p_bi)
         stc = sc.false_discovery_control(pvals, method=correction)
         nodes_diff.loc[pvals.index, 'test_p'] = pvals
-        nodes_diff.loc[pvals.index, 'STC'] = stc
+        nodes_diff.loc[pvals.index, 'STC'] = 1 -stc
 
     if p_cont:
         pvals = pd.Series(p_cont)
         stc = sc.false_discovery_control(pvals, method=correction)
         nodes_diff.loc[pvals.index, 'test_p'] = pvals
-        nodes_diff.loc[pvals.index, 'STC'] = stc
+        nodes_diff.loc[pvals.index, 'STC'] = 1 - stc
 
     # In case a test failed and returned NaN, set p-value to 1.0
     nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
-    nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
+    nodes_diff['STC'] = nodes_diff['STC'].fillna(0.0)
 
     return nodes_diff
 
