@@ -299,9 +299,13 @@ def stat_test_centrality(context1, context2, meta_file, correction='bh', bi_cont
         if bi_cont == 'mwu':
             p_cont[node] = sc.mannwhitneyu(cont1[node], cont2[node], nan_policy='omit').pvalue
         elif bi_cont == 'ttest':
-            p_cont[node] = sc.ttest_ind(cont1[node], cont2[node], nan_policy='omit').pvalue
+            p_cont[node] = sc.ttest_ind(cont1[node], cont2[node], nan_policy='omit', equal_var=False).pvalue
+        elif bi_cont == 'anova':
+            p_cont[node] = sc.f_oneway(cont1[node], cont2[node], nan_policy='omit', equal_var=False).pvalue
+        elif bi_cont == 'kruskal':
+            p_cont[node] = sc.kruskal(cont1[node], cont2[node], nan_policy='omit').pvalue
         else:
-            raise ValueError(f"Invalid test type '{bi_cont}' for comparing continuous variables across contexts using the STC metric. Choose from 'mwu' or 'ttest'.")
+            raise ValueError(f"Invalid test type '{bi_cont}' for comparing continuous variables across contexts using the STC metric. Choose from 'mwu', 'ttest', 'anova', or 'kruskal'.")
 
     if p_cat:
         pvals = pd.Series(p_cat)
