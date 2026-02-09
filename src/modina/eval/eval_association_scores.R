@@ -7,7 +7,7 @@ source('./eval_helpers.R')
 # TODO: read in summary.csv and additional params
 summary <- as.data.table()
 study <- #('sim' or 'real') 
-simulations <- nrow(summary)
+simulations <- max(summary$id, na.rm = TRUE)
 name1 <- 
 name2 <- 
 
