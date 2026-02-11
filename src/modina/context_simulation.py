@@ -207,7 +207,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         context1.to_csv(os.path.join(path, f'{name1}.csv'))
         context2.to_csv(os.path.join(path, f'{name2}.csv'))
         meta.to_csv(os.path.join(path, 'meta.csv'), index=False)
-        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth.txt'))
+        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth_nodes.txt'), mode='node')
+        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth_edges.txt'), mode='edge')
 
     return context1, context2, meta, (shift_nodes, corr_nodes, shift_corr_nodes)
 
@@ -299,18 +300,30 @@ def simu_gaussian(n: int, m: int, corr_matrix: np.ndarray, mean_vector: Optional
 
 
 # Save ground truth nodes to file
-def save_gt(groundtruths, path):
+def save_gt(groundtruths, path, mode='node'):
     shift = groundtruths[0]
     corr = groundtruths[1]
     shift_corr = groundtruths[2]
 
-    with open(path, 'w') as f:
-        f.write('node, description\n')
-        for node in shift:
-            f.write(node + ', mean shift\n')
-        for pair in corr:
-            f.write(pair[0] + ', diff. corr.\n')
-            f.write(pair[1] + ', diff. corr.\n')
-        for pair in shift_corr:
-            f.write(pair[0] + ', mean shift + diff. corr.\n')
-            f.write(pair[1] + ', mean shift + diff. corr.\n')
+    if mode == 'node':
+        with open(path, 'w') as f:
+            f.write('node, description\n')
+            for node in shift:
+                f.write(node + ', mean shift\n')
+            for pair in corr:
+                f.write(pair[0] + ', diff. corr.\n')
+                f.write(pair[1] + ', diff. corr.\n')
+            for pair in shift_corr:
+                f.write(pair[0] + ', mean shift + diff. corr.\n')
+                f.write(pair[1] + ', mean shift + diff. corr.\n')
+
+    if mode == 'edge':
+        with open(path, 'w') as f:
+            f.write('edge, description\n')
+            for pair in corr:
+                edge = '_'.join(sorted(pair))
+                f.write(edge + ', diff. corr.\n')
+            for pair in shift_corr:
+                edge = '_'.join(sorted(pair))
+                f.write(edge + ', mean shift + diff. corr.\n')
+

@@ -78,7 +78,12 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame], edges_diff: Optional[pd.
 
         ranking_scores = edges_diff[['label1', 'label2', edge_metric]].copy()
         ranking_scores = ranking_scores.sort_values(by=edge_metric, ascending=False).reset_index(drop=True)
-        ranks = ranking_scores[['label1', 'label2']].values.tolist()
+        #ranks = ranking_scores[['label1', 'label2']].values.tolist()
+        ranks = (
+            ranking_scores[['label1', 'label2']]
+            .apply(lambda row: '_'.join(sorted(row)), axis=1)
+            .tolist()
+        )
 
     else:
         raise ValueError(f"Invalid ranking algorithm {ranking_alg}. "
