@@ -163,10 +163,11 @@ assoc_scores_jitter <- function(scores, metric, study, label_positions = NULL){
 
 
 # Jitter plot of differential scores
-diff_scores_jitter <- function(configs, weight, mode = "edges", path = NULL){
-  all_data <- list()
+diff_scores_jitter <- function(configs, weight, mode = 'edges', study = 'sim'){
+  if (study == 'sim'){
   
   # Loop through all provided configurations
+  all_data <- list()
   for (i in seq_along(configs)) {
     config <- configs[[i]]
     
@@ -181,11 +182,17 @@ diff_scores_jitter <- function(configs, weight, mode = "edges", path = NULL){
     if (mode == "edges") {
       # Create dictionary containing all ground truth edges
       gt_dict <- create_gt_edge_dict(config$groundtruth)
+      
+      color_palette <- ground_truth_palette_edges
+      color_palette_dark <- ground_truth_palette_edges_dark
     } else{
       # Create dictionary containing all ground truth nodes
       gt_table <- read_csv(config$groundtruth, col_names=c("node", "description"))
       gt_table$description <- str_trim(gt_table$description)
       gt_dict <- setNames(gt_table$description, gt_table$node)
+      
+      color_palette <- ground_truth_palette
+      color_palette_dark <- ground_truth_palette_dark
       
       colnames(scores)[1] <- "node"
     }
@@ -194,13 +201,13 @@ diff_scores_jitter <- function(configs, weight, mode = "edges", path = NULL){
     gt <- t(apply(scores, 1, get_gt_info, mode=mode, gt_dict=gt_dict))
     scores <- cbind(scores, as.data.frame(gt))
     
-    # Collect all levels
+    # Collect all data
     all_data[[i]] <- scores %>% select(all_of(weight), groundtruth, description)
   }
   
-  # Combine all levels
+  # Combine all data
   combined_data <- bind_rows(all_data)
-  combined_data$description <- factor(combined_data$description, levels = names(ground_truth_palette))
+  combined_data$description <- factor(combined_data$description, levels = names(color_palette))
   
   # Point plot
   p <- ggplot(combined_data, aes(x=1, y = .data[[weight]], color = description)) +
@@ -215,8 +222,8 @@ diff_scores_jitter <- function(configs, weight, mode = "edges", path = NULL){
       x = NULL,
       fill = "Ground truth"
     ) +
-    scale_fill_manual(values = ground_truth_palette_edges) +
-    scale_color_manual(values = ground_truth_palette_edges_dark) + # Make circles a little darker
+    scale_fill_manual(values = color_palette) +
+    scale_color_manual(values = color_palette_dark) + 
     theme_minimal() +
     theme(legend.position = "right", 
           panel.grid.major.x = element_blank(),
@@ -226,7 +233,47 @@ diff_scores_jitter <- function(configs, weight, mode = "edges", path = NULL){
           axis.ticks.x = element_blank(),
           axis.title.y = element_text(size = 16),
           axis.text.y  = element_text(size = 14))
-  
+  } else if (study == 'real'){
+    # Loop through all provided configurations
+    all_data <- list()
+    for (i in seq_along(configs)) {
+      config <- configs[[i]]
+      
+      # Extract scores
+      scores <- read_csv(config$scores)
+      
+      if (mode == "nodes") {
+        colnames(scores)[1] <- "node"
+      }
+      
+      # Collect all data
+      all_data[[i]] <- scores %>% select(all_of(weight))
+    }
+    
+    # Combine all data
+    combined_data <- bind_rows(all_data)
+
+    # Point plot
+    p <- ggplot(combined_data, aes(x=1, y = .data[[weight]])) +
+      geom_jitter(
+        shape = 21, size = 2.0, alpha = 0.6, stroke = 1, fill = 'gray70', color = 'gray50',
+        position = position_jitterdodge(jitter.width = 0.3, jitter.height = 0, dodge.width = 0.5)
+      ) +
+      guides(color = "none") +
+      labs(
+        y = weight,
+        x = NULL,
+      ) +
+      theme_minimal() +
+      theme(panel.grid.major.x = element_blank(),
+            panel.grid.minor.x = element_blank(),
+            axis.title.x = element_blank(),
+            axis.text.x  = element_blank(),
+            axis.ticks.x = element_blank(),
+            axis.title.y = element_text(size = 16),
+            axis.text.y  = element_text(size = 14))
+    
+  }
   return(p)
 }
 

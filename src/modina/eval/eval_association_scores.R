@@ -70,6 +70,7 @@ if (study == 'sim'){
   ggsave(paste0(project_path, '/results/association_scores_raw-E.png'), plot_e, width = 7, height = 3 * n_tests)
   
 } else if (study == 'real'){
+  
   # Get paths
   scores1 <- summary[id == 1, network_context_1]
   scores2 <- summary[id == 1, network_context_2]
