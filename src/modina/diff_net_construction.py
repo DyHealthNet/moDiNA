@@ -46,11 +46,11 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
 
     # Edges
     if edge_metric is not None:
-        edges_diff = _compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, max_path_length=max_path_length)
+        edges_diff = compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, max_path_length=max_path_length)
 
     # Nodes
     if node_metric is not None:
-        nodes_diff = _compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
+        nodes_diff = compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
                                          node_metric=node_metric, correction=correction, meta_file=meta_file, bi_cont=bi_cont)
 
     if path is not None:
@@ -333,7 +333,8 @@ def stat_test_centrality(context1, context2, meta_file, correction='bh', bi_cont
 
 
 # Differential edge computation
-def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric: str , max_path_length: int = 2) -> pd.DataFrame:
+def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric: str , max_path_length: int = 2,
+                       path: Optional[str] = None) -> pd.DataFrame:
     """
     Compute differential edge scores based on the specified edge metric.
 
@@ -341,10 +342,17 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
     :param scores2: Statistical association scores of Context 2, rescaled and potentially filtered.
     :param edge_metric: Edge metric to compute the differential edge scores.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
+    :param path: Optional path to save the differential edge scores as a CSV file. Defaults to None.
     :return: A DataFrame containing the computed differential edge scores.
     """
-
+    
     edges_diff = None
+
+    # Rescaling
+    if not 'pre-E' in scores1.columns or not 'pre-E' in scores2.columns:
+        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-E') 
+    if not 'pre-P' in scores1.columns or not 'pre-P' in scores2.columns:
+        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-P')
 
     # Pre-rescaled effect size (pre-E) or rescaled multiple-testing adjusted p-value (pre-P)
     if edge_metric == 'pre-P' or edge_metric == 'pre-E':
@@ -468,12 +476,16 @@ def _compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metri
         # Compute difference in edge scores
         edges_diff = _subtract_edges(scores1, scores2, metrics=[edge_metric], included_cols=('test_type',))
     
+    if path is not None:
+        edges_diff.to_csv(path)
+    
     return edges_diff
 
 
 # Differential node computation
-def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
-                        node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None, bi_cont: str = 'mwu') -> pd.DataFrame:
+def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
+                        node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None, bi_cont: str = 'mwu',
+                        path: Optional[str] = None) -> pd.DataFrame:
     """
     Compute differential node scores based on the specified node metric.
 
@@ -485,6 +497,7 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
     :param correction: Correction method for multiple testing. Only needed if node_metric is 'STC'. Defaults to 'bh'.
     :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
     :param bi_cont: Statistical test to compare continuous variables across contexts for the 'STC' node metric. Choose from 'mwu' or 'ttest'. Defaults to 'mwu'.
+    :param path: Optional path to save the differential node scores as a CSV file. Defaults to None.
     :return: A DataFrame containing the computed differential node scores.
     """
 
@@ -492,6 +505,12 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
 
     nodes = context1.columns
     nodes_diff = pd.DataFrame(index=nodes)
+
+    # Rescaling
+    if not 'pre-E' in scores1.columns or not 'pre-E' in scores2.columns:
+        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-E') 
+    if not 'pre-P' in scores1.columns or not 'pre-P' in scores2.columns:
+        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-P')
 
     # Statistical test centrality (STC)
     if node_metric == 'STC':
@@ -535,6 +554,9 @@ def _compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: 
 
     else:
         raise ValueError(f"Invalid node metric '{node_metric}'. Choose from: 'STC', 'DC-P', 'DC-E', 'WDC-P', 'WDC-E', 'PRC-P' or 'PRC-E'.")
+    
+    if path is not None:
+        nodes_diff.to_csv(path)
 
     return nodes_diff
 
