@@ -32,8 +32,10 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         raise ValueError('scores1 and scores2 need to have the same structure and order of edges.')
 
     # Rescaling
-    scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-P')
-    scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-E')
+    if not 'pre-E' in scores1.columns or not 'pre-E' in scores2.columns:
+        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-E') 
+    if not 'pre-P' in scores1.columns or not 'pre-P' in scores2.columns:
+        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-P')
 
     # Check input parameters
     if filter_method is None:
