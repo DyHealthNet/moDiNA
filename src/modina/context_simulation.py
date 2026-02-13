@@ -172,9 +172,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     for i, node in enumerate(nodes):
         if i < n_cont:
             # Continuous node
-            # TODO: maybe change the mean to 0 (because the interval is arbitrarily chosen and may rise questions)
-            mean = np.random.uniform(-100, 100)
-            std = 1.0
+            mean = 0.0
+            std = 0.5
             context1_cont[node] = sc.stats.norm.ppf(u1[i, :], loc=mean, scale=std)
             context2_cont[node] = sc.stats.norm.ppf(u2[i, :], loc=mean, scale=std)
 
@@ -186,7 +185,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         
         else:
             # Categorical node
-            n_categories = np.random.randint(3, 10) # Randomly choose number of categories between 3 and 10
+            #n_categories = np.random.randint(3, 10) # Randomly choose number of categories between 3 and 10
+            n_categories = 5 # fixed number of categories
             p = np.random.dirichlet(np.ones(n_categories), size=1).flatten()  # Random probabilities for each category
             cdf = np.cumsum(p)
             context1_cat[node] = np.searchsorted(cdf, u1[i, :])
