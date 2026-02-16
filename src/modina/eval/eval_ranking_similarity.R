@@ -1,6 +1,8 @@
 #!/usr/bin/env Rscript
 
 ######## ------------- Libraries ------------- ########
+.libPaths("/nfs/home/students/a.raithel/miniconda3/envs/modina_eval_env/lib/R/library")
+library(GGally)
 library(patchwork)
 library(ggplot2)
 library(dplyr)
@@ -11,7 +13,6 @@ library(argparse)
 library(purrr)
 library(tidyr)
 library(pROC)
-library(GGally)
 
 ######## ------------- Utils ------------- ########
 
@@ -29,6 +30,27 @@ ground_truth_palette_boolean <- c("False" = "snow2", "True" = "#C03830")
 edge_metrics_subset = c('pre-P', 'post-P', 'pre-E', 'post-E', 'pre-CS', 'post-CS', 'int-IS', 'pre-LS', 'post-LS', 'pre-PE', 'post-PE')
 node_metrics_subset = c('DC-P', 'DC-E', 'STC', 'PRC-P', 'PRC-E', 'WDC-P', 'WDC-E')
 algorithms_subset = c('direct_node', 'PageRank', 'PageRank+', 'DimontRank', 'absDimontRank')
+
+
+# Extract ground truth information from a row
+get_gt_info <- function(row, mode, gt_dict) {
+  if (mode == 'edges'){
+    edge <- paste(sort(c(row['label1'], row['label2'])), collapse = "_")
+    
+    description <- ifelse(edge %in% names(gt_dict), gt_dict[[edge]], NA)
+    gt <- !is.na(description)
+    description <- ifelse(is.na(description), 'non-ground truth', description)
+  }
+  else{
+    node <- row[['node']]
+    description <- ifelse(node %in% names(gt_dict), gt_dict[[node]], NA)
+    gt <- !is.na(description)
+    description <- ifelse(is.na(description), 'non-ground truth', description)
+  }
+  
+  return(c(groundtruth = gt, description = description))    
+}
+
 
 # Spearman correlation heatmap
 corr_heatmap <- function(data){
@@ -77,9 +99,6 @@ rank_heatmap <- function(data, gt_dict){
   # Prepare heatmap matrix
   m <- as.matrix(data[, -1])
   rownames(m) <- data$node
-  
-  #m <- matrix(NA, nrow = length(gt_nodes), ncol = ncol(data),
-  #            dimnames = list(gt_nodes, data$config))
   
   if (ncol(m) < 2){
     return(FALSE)
@@ -133,7 +152,10 @@ rank_heatmap <- function(data, gt_dict){
   
   annotated_heatmap <- heatmap + annotation + 
     plot_layout(widths = c(ncol(m), 1), guides = "collect") &
-    theme(legend.position = "none")
+    theme(legend.position = "right",
+          panel.grid = element_blank(),
+          axis.ticks = element_blank()
+  )
   
   return(annotated_heatmap)
 }
@@ -185,14 +207,17 @@ par_coord <- function(data, metric, gt_dict){
 
 ######## ------------- Argument parser ------------- ########
 
-parser <- ArgumentParser(description='Ranking Similarity')
-parser$add_argument('summary_file', 
-                    help='Input summary data file storing all generated configurations and their results.')
-parser$add_argument('data_type', help = 'Type of data: simulation or real')
-args <- parser$parse_args()
+#parser <- ArgumentParser(description='Ranking Similarity')
+#parser$add_argument('summary_file', 
+#                    help='Input summary data file storing all generated configurations and their results.')
+#parser$add_argument('data_type', help = 'Type of data: simulation or real')
+#args <- parser$parse_args()
 
-summary_file <- args$summary_file
-data_type <- args$data_type
+#summary_file <- args$summary_file
+#data_type <- args$data_type
+
+summary_file <- '/nfs/proj/a.raithel/thesis/data/nf_pipeline/out_file/summary.csv'
+data_type <- 'simulation'
 
 ######## ------------- Process data ------------- ########
 
@@ -210,9 +235,12 @@ for (sim in 1:simulations){
   node_rankings <- sim_summary[algorithm!='direct_edge', ]
   
   # Edge metrics
-  for (edge_metric in edge_metrics_subset){
+  for (metric in edge_metrics_subset){
     # Filter for metric
     data <- node_rankings[edge_metric==metric, ]
+    if (nrow(data) < 2){
+      next
+    }
     
     # Read in rankings
     ranking_list <- lapply(data$ranking_file, fread)
@@ -226,29 +254,32 @@ for (sim in 1:simulations){
     colnames(merged_data)[-1] <- data$config
     
     # Correlation heatmap
-    corr_heatmap <- corr_heatmap(data = merged_data)
+    heatmap <- corr_heatmap(data = merged_data)
     height = 1 + 0.5 * ncol(merged_data)
-    ggsave(paste0(sim, '_spearman_corr_heatmap_', edge_metric, '.png'), corr_heatmap, width = height+2, height = height)
+    ggsave(paste0(sim, '_spearman_corr_heatmap_', metric, '.png'), heatmap, width = height+2, height = height)
     
     # Plots only useful for simulated data
     if (data_type == 'simulation'){
       # Rank heatmap
-      rank_heatmap <- rank_heatmap(data = merged_data, gt_dict = gt_dict)
+      heatmap <- rank_heatmap(data = merged_data, gt_dict = gt_dict)
       width = 5.5
       height = 0.25 * nrow(gt_table)
-      ggsave(paste0(sim, '_rank_heatmap_', edge_metric, '.png'), rank_heatmap, width = width, height = height)
+      ggsave(paste0(sim, '_rank_heatmap_', metric, '.png'), heatmap, width = width, height = height)
       
       # Parallel coordinates plot
-      parallel_coordinates <- par_coord(data = merged_data, metric = edge_metric, gt_dict = gt_dict)
+      parallel_coordinates <- par_coord(data = merged_data, metric = metric, gt_dict = gt_dict)
       width = 1.5 * ncol(merged_data)
-      ggsave(paste0(sim, '_parallel_coordinates_', edge_metric, '.png'), parallel_coordinates, width = width)
+      ggsave(paste0(sim, '_parallel_coordinates_', metric, '.png'), parallel_coordinates, width = width)
     }
   }
   
   # Node metrics
-  for (node_metric in node_metrics_subset){
+  for (metric in node_metrics_subset){
     # Filter for metric
-    data <- node_rankings[edge_metric==metric, ]
+    data <- node_rankings[node_metric==metric, ]
+    if (nrow(data) < 2){
+      next
+    }
     
     # Read in rankings
     ranking_list <- lapply(data$ranking_file, fread)
@@ -262,29 +293,32 @@ for (sim in 1:simulations){
     colnames(merged_data)[-1] <- data$config
     
     # Correlation heatmap
-    corr_heatmap <- corr_heatmap(data = merged_data)
+    heatmap <- corr_heatmap(data = merged_data)
     height = 1 + 0.5 * ncol(merged_data)
-    ggsave(paste0(sim, '_spearman_corr_heatmap_', node_metric, '.png'), corr_heatmap, width = height+2, height = height)
+    ggsave(paste0(sim, '_spearman_corr_heatmap_', metric, '.png'), heatmap, width = height+2, height = height)
     
     # Plots only useful for simulated data
     if (data_type == 'simulation'){
       # Rank heatmap
-      rank_heatmap <- rank_heatmap(data = merged_data, gt_dict = gt_dict)
+      heatmap <- rank_heatmap(data = merged_data, gt_dict = gt_dict)
       width = 5.5
       height = 0.25 * nrow(gt_table)
-      ggsave(paste0(sim, '_rank_heatmap_', node_metric, '.png'), rank_heatmap, width = width, height = height)
+      ggsave(paste0(sim, '_rank_heatmap_', metric, '.png'), heatmap, width = width, height = height)
       
       # Parallel coordinates plot
-      parallel_coordinates <- par_coord(data = merged_data, metric = node_metric, gt_dict = gt_dict)
+      parallel_coordinates <- par_coord(data = merged_data, metric = metric, gt_dict = gt_dict)
       width = 1.5 * ncol(merged_data)
-      ggsave(paste0(sim, '_parallel_coordinates_', node_metric, '.png'), parallel_coordinates, width = width)
+      ggsave(paste0(sim, '_parallel_coordinates_', metric, '.png'), parallel_coordinates, width = width)
     }
   }
   
   # Ranking algorithms
-  for (ranking_alg in ranking_alg_subset){
+  for (ranking_alg in algorithms_subset){
     # Filter for metric
-    data <- node_rankings[edge_metric==metric, ]
+    data <- node_rankings[algorithm==ranking_alg, ]
+    if (nrow(data) < 2){
+      next
+    }
     
     # Read in rankings
     ranking_list <- lapply(data$ranking_file, fread)
@@ -298,17 +332,17 @@ for (sim in 1:simulations){
     colnames(merged_data)[-1] <- data$config
     
     # Correlation heatmap
-    corr_heatmap <- corr_heatmap(data = merged_data)
+    heatmap <- corr_heatmap(data = merged_data)
     height = 1 + 0.5 * ncol(merged_data)
-    ggsave(paste0(sim, '_spearman_corr_heatmap_', ranking_alg, '.png'), corr_heatmap, width = height+2, height = height)
+    ggsave(paste0(sim, '_spearman_corr_heatmap_', ranking_alg, '.png'), heatmap, width = height+2, height = height)
     
     # Plots only useful for simulated data
     if (data_type == 'simulation'){
       # Rank heatmap
-      rank_heatmap <- rank_heatmap(data = merged_data, gt_dict = gt_dict)
+      heatmap <- rank_heatmap(data = merged_data, gt_dict = gt_dict)
       width = 5.5
       height = 0.25 * nrow(gt_table)
-      ggsave(paste0(sim, '_rank_heatmap_', ranking_alg, '.png'), rank_heatmap, width = width, height = height)
+      ggsave(paste0(sim, '_rank_heatmap_', ranking_alg, '.png'), heatmap, width = width, height = height)
       
       # Parallel coordinates plot
       parallel_coordinates <- par_coord(data = merged_data, metric = ranking_alg, gt_dict = gt_dict)
