@@ -11,6 +11,7 @@ library(argparse)
 library(purrr)
 library(tidyr)
 library(pROC)
+library(GGally)
 
 ######## ------------- Utils ------------- ########
 
@@ -65,9 +66,8 @@ corr_heatmap <- function(data){
 
 
 # Create rank heatmaps for ground truth nodes
-rank_heatmap <- function(data, gt_table){
-  # Create dictionary containing all ground truth nodes
-  gt_dict <- setNames(gt_table$description, gt_table$node)
+rank_heatmap <- function(data, gt_dict){
+  # Extract ground truth nodes
   gt_nodes <- names(gt_dict)
   
   # Create ground truth annotation dataframe for heatmap
@@ -138,6 +138,51 @@ rank_heatmap <- function(data, gt_table){
   return(annotated_heatmap)
 }
 
+
+# Create a parallel coordinates plot to compare the rankings
+par_coord <- function(data, metric, gt_dict){
+  data <- as.data.table(data)
+  
+  # Replace NAs by last rank
+  last_rank <- nrow(data)
+  ranking_cols <- setdiff(colnames(data), "node")
+  for (col in ranking_cols) {
+    data[is.na(get(col)), (col) := last_rank]
+  }
+  
+  # Add ground truth information
+  gt_data <- t(apply(data, 1, get_gt_info, 
+                     mode='nodes', gt_dict=gt_dict))
+  data <- cbind(data, as.data.table(gt_data))
+  
+  # Get ranking columns
+  ranking_cols <- setdiff(colnames(data),
+                          c("node", "groundtruth", "description"))
+  
+  columns = which(colnames(data) %in% ranking_cols)
+  
+  # Plot
+  p <- ggparcoord(
+    data = data,
+    columns = columns,
+    groupColumn = 'description',
+    alphaLines = 1.0,
+    scale = "globalminmax"
+  ) +
+    labs(x='', y='Rank', color='Ground Truth') +
+    scale_color_manual(values = ground_truth_palette) +
+    theme_minimal() +
+    theme(
+      axis.text.y  = element_text(size = 18),
+      axis.title.y = element_text(size = 18),
+      legend.text  = element_text(size = 18),
+      legend.title = element_text(size = 20),
+      axis.text.x  = element_text(size = 18, angle = 45, hjust = 1)
+    )
+  
+  return(p)
+}
+
 ######## ------------- Argument parser ------------- ########
 
 parser <- ArgumentParser(description='Ranking Similarity')
@@ -160,7 +205,8 @@ summary_dt <- unique(summary_dt[, c("id", "edge_metric", "node_metric", "algorit
 
 for (sim in 1:simulations){
   sim_summary <- summary_dt[id == sim, ]
-  gt <- fread(unique(sim_summary[, ground_truth_nodes]))
+  gt_table <- fread(unique(sim_summary[, ground_truth_nodes]))
+  gt_dict <- setNames(gt_table$description, gt_table$node)
   node_rankings <- sim_summary[algorithm!='direct_edge', ]
   
   # Edge metrics
@@ -184,12 +230,18 @@ for (sim in 1:simulations){
     height = 1 + 0.5 * ncol(merged_data)
     ggsave(paste0(sim, '_spearman_corr_heatmap_', edge_metric, '.png'), corr_heatmap, width = height+2, height = height)
     
-    # Rank heatmap
+    # Plots only useful for simulated data
     if (data_type == 'simulation'){
-      rank_heatmap <- rank_heatmap(data = merged_data, gt_table = gt)
+      # Rank heatmap
+      rank_heatmap <- rank_heatmap(data = merged_data, gt_dict = gt_dict)
       width = 5.5
-      height = 0.25 * nrow(gt)
+      height = 0.25 * nrow(gt_table)
       ggsave(paste0(sim, '_rank_heatmap_', edge_metric, '.png'), rank_heatmap, width = width, height = height)
+      
+      # Parallel coordinates plot
+      parallel_coordinates <- par_coord(data = merged_data, metric = edge_metric, gt_dict = gt_dict)
+      width = 1.5 * ncol(merged_data)
+      ggsave(paste0(sim, '_parallel_coordinates_', edge_metric, '.png'), parallel_coordinates, width = width)
     }
   }
   
@@ -214,12 +266,18 @@ for (sim in 1:simulations){
     height = 1 + 0.5 * ncol(merged_data)
     ggsave(paste0(sim, '_spearman_corr_heatmap_', node_metric, '.png'), corr_heatmap, width = height+2, height = height)
     
-    # Rank heatmap
+    # Plots only useful for simulated data
     if (data_type == 'simulation'){
-      rank_heatmap <- rank_heatmap(data = merged_data, gt_table = gt)
+      # Rank heatmap
+      rank_heatmap <- rank_heatmap(data = merged_data, gt_dict = gt_dict)
       width = 5.5
-      height = 0.25 * nrow(gt)
+      height = 0.25 * nrow(gt_table)
       ggsave(paste0(sim, '_rank_heatmap_', node_metric, '.png'), rank_heatmap, width = width, height = height)
+      
+      # Parallel coordinates plot
+      parallel_coordinates <- par_coord(data = merged_data, metric = node_metric, gt_dict = gt_dict)
+      width = 1.5 * ncol(merged_data)
+      ggsave(paste0(sim, '_parallel_coordinates_', node_metric, '.png'), parallel_coordinates, width = width)
     }
   }
   
@@ -244,12 +302,18 @@ for (sim in 1:simulations){
     height = 1 + 0.5 * ncol(merged_data)
     ggsave(paste0(sim, '_spearman_corr_heatmap_', ranking_alg, '.png'), corr_heatmap, width = height+2, height = height)
     
-    # Rank heatmap
+    # Plots only useful for simulated data
     if (data_type == 'simulation'){
-      rank_heatmap <- rank_heatmap(data = merged_data, gt_table = gt)
+      # Rank heatmap
+      rank_heatmap <- rank_heatmap(data = merged_data, gt_dict = gt_dict)
       width = 5.5
-      height = 0.25 * nrow(gt)
+      height = 0.25 * nrow(gt_table)
       ggsave(paste0(sim, '_rank_heatmap_', ranking_alg, '.png'), rank_heatmap, width = width, height = height)
+      
+      # Parallel coordinates plot
+      parallel_coordinates <- par_coord(data = merged_data, metric = ranking_alg, gt_dict = gt_dict)
+      width = 1.5 * ncol(merged_data)
+      ggsave(paste0(sim, '_parallel_coordinates_', ranking_alg, '.png'), parallel_coordinates, width = width)
     }
   }
   
