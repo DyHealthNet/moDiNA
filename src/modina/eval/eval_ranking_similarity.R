@@ -12,7 +12,6 @@ library(colorspace)
 library(argparse)
 library(purrr)
 library(tidyr)
-library(pROC)
 
 ######## ------------- Utils ------------- ########
 
@@ -23,8 +22,6 @@ ground_truth_palette <- c(
   "mean shift + diff. corr."    = "#b2df8a",
   "non-ground truth"            = "lightgray"
 )
-
-ground_truth_palette_boolean <- c("False" = "snow2", "True" = "#C03830")
 
 # Valid focus values
 edge_metrics_subset = c('pre-P', 'post-P', 'pre-E', 'post-E', 'pre-CS', 'post-CS', 'int-IS', 'pre-LS', 'post-LS', 'pre-PE', 'post-PE')
