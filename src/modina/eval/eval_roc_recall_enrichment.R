@@ -17,14 +17,6 @@ library(tibble)
 
 ######## ------------- Utils ------------- ########
 
-# Colors
-ground_truth_palette <- c(
-  "diff. corr."                = "#fdbf6f",
-  "mean shift"                  = "#C195C4",
-  "mean shift + diff. corr."    = "#b2df8a",
-  "non-ground truth"            = "lightgray"
-)
-
 # Node and edge metrics, algorithms
 node_metrics <- c("WDC-P", "WDC-E", "DC-P", "DC-E", "PRC-P", "PRC-E", "STC", "None")
 node_metrics_colors <- c("#8DD3C7", "#41B6C4", "#F1B6DA", "#DD1C77","#CCCCCC", "#636363", "#FFD700","#FF6B6B")
@@ -139,13 +131,59 @@ roc_curve <- function(data, variable_param, variable_colors){
       title = paste0("ROC Curve: ", metric, ', ', ranking_alg),
       x = "False Positive Rate",
       y = "True Positive Rate",
-      color = "Node Metric (Mean AUC)",
+      color = stringr::str_replace_all(as_label(enquo(variable_param)), "_", " ")
     ) +
     scale_color_manual(values = color_map) +
     scale_fill_manual(values = color_map) +
     guides(fill = "none")
   
-  p
+  return(p)
+}
+
+
+# Create recall vs. rank plot
+recall_vs_rank <- function(data, variable_param, variable_colors){
+  data_long <- data %>%
+    select(id, {{variable_param}}, tpr) %>%
+    unnest(cols = c(tpr))
+  
+  # Create rank column
+  data_long <- data_long %>%
+    group_by({{variable_param}}, id) %>%
+    mutate(rank = seq_along(tpr)) %>%
+    ungroup()
+  
+  # Average per rank
+  data_mean <- data_long %>%
+    group_by({{variable_param}}, rank) %>%
+    summarise(
+      mean_tpr = mean(tpr, na.rm = TRUE),
+      sd_tpr = sd(tpr, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  data_mean <- data_mean %>%
+    mutate(config_label = as.character({{variable_param}}))
+  
+  # Color mapping
+  unique_labels <- unique(data_mean$config_label)
+  color_map <- variable_colors[unique_labels]
+  
+  # Plot
+  p <- ggplot(data_mean, aes(x = rank, y = mean_tpr, color = config_label, fill = config_label)) +
+    geom_line(linewidth = 1) +
+    geom_ribbon(aes(ymin = mean_tpr - sd_tpr, ymax = mean_tpr + sd_tpr), alpha = 0.2, color = NA) +
+    theme_minimal() +
+    labs(
+      x = "Rank",
+      y = "Recall (TPR)",
+      color = stringr::str_replace_all(as_label(enquo(variable_param)), "_", " ")
+    ) +
+    scale_color_manual(values = color_map) +
+    scale_fill_manual(values = color_map) +
+    guides(fill = "none")
+  
+  return(p)
 }
 
 ######## ------------- Argument parser ------------- ########
@@ -207,7 +245,8 @@ for(metric in edge_metrics) {
     next
   }
   
-  plot_list <- list()
+  roc_list <- list()
+  recall_list <- list()
   
   # Vary the algorithm
   for (ranking_alg in algorithms){
@@ -216,16 +255,23 @@ for(metric in edge_metrics) {
       next
     }
     
-    p <- roc_curve(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)
-    plot_list <- c(plot_list, list(p))
+    roc <- roc_curve(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)
+    roc_list <- c(roc_list, list(roc))
+    
+    recall <- recall_vs_rank(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)
+    recall_list <- c(recall_list, list(recall))
+    
   }
   
   # Combine plots
-  combined_plot <- wrap_plots(plot_list, ncol = 1)
-  ggsave(paste0('ROC_curves_', metric, '_algorithms.png'), combined_plot, width = 8, height = 4 * length(plot_list))
+  combined_roc <- wrap_plots(roc_list, ncol = 1)
+  ggsave(paste0('ROC_curves_', metric, '_algorithms.png'), combined_roc, width = 6, height = 3 * length(roc_list))
   
+  combined_recall <- wrap_plots(recall_list, ncol = 1)
+  ggsave(paste0('recall_vs_rank_', metric, '_algorithms.png'), combined_recall, width = 6, height = 3 * length(recall_list))
   
-  plot_list <- list()
+  roc_list <- list()
+  recall_list <- list()
   
   # Vary the node metric
   for (met in node_metrics){
@@ -234,13 +280,19 @@ for(metric in edge_metrics) {
       next
     }
     
-    p <- roc_curve(data = data, variable_param = algorithm, variable_colors = algorithm_colors)
-    plot_list <- c(plot_list, list(p))
+    roc <- roc_curve(data = data, variable_param = algorithm, variable_colors = algorithm_colors)
+    roc_list <- c(roc_list, list(roc))
+    
+    recall <- recall_vs_rank(data = data, variable_param = algorithm, variable_colors = algorithm_colors)
+    recall_list <- c(recall_list, list(recall))
   }
   
   # Combine plots
-  combined_plot <- wrap_plots(plot_list, ncol = 1)
-  ggsave(paste0('ROC_curves_', metric, '_node_metrics.png'), combined_plot, width = 8, height = 4 * length(plot_list))
+  combined_roc <- wrap_plots(roc_list, ncol = 1)
+  ggsave(paste0('ROC_curves_', metric, '_node_metrics.png'), combined_roc, width = 6, height = 3 * length(roc_list))
+  
+  combined_recall <- wrap_plots(recall_list, ncol = 1)
+  ggsave(paste0('recall_vs_rank_', metric, '_node_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
 }
 
 for(metric in node_metrics) {
@@ -250,7 +302,8 @@ for(metric in node_metrics) {
     next
   }
   
-  plot_list <- list()
+  roc_list <- list()
+  recall_list <- list()
   
   # Vary the algorithm
   for (ranking_alg in algorithms){
@@ -259,16 +312,23 @@ for(metric in node_metrics) {
       next
     }
     
-    p <- roc_curve(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)
-    plot_list <- c(plot_list, list(p))
+    roc <- roc_curve(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)
+    roc_list <- c(roc_list, list(roc))
+    
+    recall <- recall_vs_rank(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)
+    recall_list <- c(recall_list, list(recall))
   }
   
   # Combine plots
-  combined_plot <- wrap_plots(plot_list, ncol = 1)
-  ggsave(paste0('ROC_curves_', metric, '_algorithms.png'), combined_plot, width = 8, height = 4 * length(plot_list))
+  combined_roc <- wrap_plots(roc_list, ncol = 1)
+  ggsave(paste0('ROC_curves_', metric, '_algorithms.png'), combined_roc, width = 6, height = 3 * length(roc_list))
+  
+  combined_recall <- wrap_plots(recall_list, ncol = 1)
+  ggsave(paste0('recall_vs_rank_', metric, '_algorithms.png'), combined_recall, width = 6, height = 3 * length(recall_list))
   
   
-  plot_list <- list()
+  roc_list <- list()
+  recall_list <- list()
   
   # Vary the edge metric
   for (met in edge_metrics){
@@ -277,13 +337,19 @@ for(metric in node_metrics) {
       next
     }
     
-    p <- roc_curve(data = data, variable_param = algorithm, variable_colors = algorithm_colors)
-    plot_list <- c(plot_list, list(p))
+    roc <- roc_curve(data = data, variable_param = algorithm, variable_colors = algorithm_colors)
+    roc_list <- c(roc_list, list(roc))
+    
+    recall <- recall_vs_rank(data = data, variable_param = algorithm, variable_colors = algorithm_colors)
+    recall_list <- c(recall_list, list(recall))
   }
   
   # Combine plots
-  combined_plot <- wrap_plots(plot_list, ncol = 1)
-  ggsave(paste0('ROC_curves_', metric, '_edge_metrics.png'), combined_plot, width = 8, height = 4 * length(plot_list))
+  combined_roc <- wrap_plots(roc_list, ncol = 1)
+  ggsave(paste0('ROC_curves_', metric, '_edge_metrics.png'), combined_roc, width = 6, height = 3 * length(roc_list))
+  
+  combined_recall <- wrap_plots(recall_list, ncol = 1)
+  ggsave(paste0('recall_vs_rank_', metric, '_edge_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
 }
 
 for(ranking_alg in algorithms) {
@@ -293,7 +359,8 @@ for(ranking_alg in algorithms) {
     next
   }
   
-  plot_list <- list()
+  roc_list <- list()
+  recall_list <- list()
   
   # Vary the edge metric
   for (met in edge_metrics){
@@ -302,16 +369,22 @@ for(ranking_alg in algorithms) {
       next
     }
     
-    p <- roc_curve(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)
-    plot_list <- c(plot_list, list(p))
+    roc <- roc_curve(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)
+    roc_list <- c(roc_list, list(roc))
+    
+    recall <- recall_vs_rank(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)
+    recall_list <- c(recall_list, list(recall))
   }
   
   # Combine plots
-  combined_plot <- wrap_plots(plot_list, ncol = 1)
-  ggsave(paste0('ROC_curves_', ranking_alg, '_edge_metrics.png'), combined_plot, width = 8, height = 4 * length(plot_list))
+  combined_roc <- wrap_plots(roc_list, ncol = 1)
+  ggsave(paste0('ROC_curves_', ranking_alg, '_edge_metrics.png'), combined_roc, width = 6, height = 3 * length(roc_list))
   
+  combined_recall <- wrap_plots(recall_list, ncol = 1)
+  ggsave(paste0('recall_vs_rank_', ranking_alg, '_edge_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
   
-  plot_list <- list()
+  roc_list <- list()
+  recall_list <- list()
   
   # Vary the node metric
   for (met in node_metrics){
@@ -320,12 +393,18 @@ for(ranking_alg in algorithms) {
       next
     }
     
-    p <- roc_curve(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)
-    plot_list <- c(plot_list, list(p))
+    roc <- roc_curve(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)
+    roc_list <- c(roc_list, list(roc))
+    
+    recall <- recall_vs_rank(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)
+    recall_list <- c(recall_list, list(recall))
   }
   
   # Combine plots
-  combined_plot <- wrap_plots(plot_list, ncol = 1)
-  ggsave(paste0('ROC_curves_', ranking_alg, '_node_metrics.png'), combined_plot, width = 8, height = 4 * length(plot_list))
+  combined_roc <- wrap_plots(roc_list, ncol = 1)
+  ggsave(paste0('ROC_curves_', ranking_alg, '_node_metrics.png'), combined_roc, width = 6, height = 3 * length(roc_list))
+  
+  combined_recall <- wrap_plots(recall_list, ncol = 1)
+  ggsave(paste0('recall_vs_rank_', ranking_alg, '_node_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
 }
 
