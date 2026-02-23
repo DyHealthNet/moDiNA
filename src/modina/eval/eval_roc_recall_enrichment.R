@@ -142,7 +142,7 @@ roc_curve <- function(data, variable_param, variable_colors){
 
 
 # Create recall vs. rank plot
-recall_vs_rank <- function(data, variable_param, variable_colors){
+recall_and_enrichment <- function(data, variable_param, variable_colors, rank_of_interest=10){
   data_long <- data %>%
     select(id, {{variable_param}}, tpr) %>%
     unnest(cols = c(tpr))
@@ -150,8 +150,21 @@ recall_vs_rank <- function(data, variable_param, variable_colors){
   # Create rank column
   data_long <- data_long %>%
     group_by({{variable_param}}, id) %>%
-    mutate(rank = seq_along(tpr)) %>%
+    mutate(rank = seq_along(tpr),
+           max_rank = max(rank)) %>%
     ungroup()
+  
+  # Filter for rank of interest
+  data_rank <- data_long %>%
+    filter(rank == rank_of_interest)
+  
+  # Add enrichment in comparison to a random ranking
+  data_rank <- data_rank %>%
+    mutate(
+      random_tpr = rank / max_rank,
+      enrichment = tpr / random_tpr,
+      config_label = as.character({{variable_param}})
+    )
   
   # Average per rank
   data_mean <- data_long %>%
@@ -170,7 +183,7 @@ recall_vs_rank <- function(data, variable_param, variable_colors){
   color_map <- variable_colors[unique_labels]
   
   # Plot
-  p <- ggplot(data_mean, aes(x = rank, y = mean_tpr, color = config_label, fill = config_label)) +
+  p_recall <- ggplot(data_mean, aes(x = rank, y = mean_tpr, color = config_label, fill = config_label)) +
     geom_line(linewidth = 1) +
     geom_ribbon(aes(ymin = mean_tpr - sd_tpr, ymax = mean_tpr + sd_tpr), alpha = 0.2, color = NA) +
     theme_minimal() +
@@ -183,7 +196,24 @@ recall_vs_rank <- function(data, variable_param, variable_colors){
     scale_fill_manual(values = color_map) +
     guides(fill = "none")
   
-  return(p)
+  p_enrichment <- ggplot(data_rank,
+                       aes(x = config_label,
+                           y = enrichment,
+                           fill = config_label)) +
+    geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+    geom_jitter(width = 0.15, alpha = 0.4) +
+    theme_minimal() +
+    scale_fill_manual(values = color_map) +
+    labs(
+      x = str_to_title(str_replace_all(as_label(enquo(variable_param)), "_", " ")),
+      y = paste0("Enrichment at Rank ", rank_of_interest)
+    ) +
+    guides(fill = "none")
+  
+  return(list(
+    recall_curve = p_recall,
+    enrichment_boxplot = p_enrichment
+  ))
 }
 
 ######## ------------- Argument parser ------------- ########
@@ -222,6 +252,11 @@ summary_dt[, `:=`(
   auc = sapply(roc_obj, function(r) as.numeric(r$auc))
 )]
 
+# Number of ground truth nodes
+ground_truth <- summary_dt$ground_truth_nodes[1]
+ground_truth <- fread(ground_truth)
+n_gt_nodes <- nrow(ground_truth)
+
 #if (nrow(edge_ranking_dt) > 0) {
 #  edge_ranking_dt[, roc_obj := mapply(calculate_ROC_statistics, 
 #                                  ground_truth_edges, 
@@ -247,6 +282,7 @@ for(metric in edge_metrics) {
   
   roc_list <- list()
   recall_list <- list()
+  enrichment_list <- list()
   
   # Vary the algorithm
   for (ranking_alg in algorithms){
@@ -258,8 +294,11 @@ for(metric in edge_metrics) {
     roc <- roc_curve(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)
     roc_list <- c(roc_list, list(roc))
     
-    recall <- recall_vs_rank(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)
+    recall <- recall_and_enrichment(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)$recall_curve
     recall_list <- c(recall_list, list(recall))
+    
+    enrichment <- recall_and_enrichment(data = data, variable_param = node_metric, variable_colors = node_metrics_colors, rank_of_interest=n_gt_nodes)$enrichment_boxplot
+    enrichment_list <- c(enrichment_list, list(enrichment))
     
   }
   
@@ -268,10 +307,14 @@ for(metric in edge_metrics) {
   ggsave(paste0('ROC_curves_', metric, '_algorithms.png'), combined_roc, width = 6, height = 3 * length(roc_list))
   
   combined_recall <- wrap_plots(recall_list, ncol = 1)
-  ggsave(paste0('recall_vs_rank_', metric, '_algorithms.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  ggsave(paste0('recall_curve_', metric, '_algorithms.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  
+  combined_enrichment <- wrap_plots(enrichment_list, ncol = 1)
+  ggsave(paste0('enrichment_boxplot_', metric, '_algorithms.png'), combined_enrichment, width = 1 + length(enrichment_list), height = 3 * length(enrichment_list))
   
   roc_list <- list()
   recall_list <- list()
+  enrichment_list <- list()
   
   # Vary the node metric
   for (met in node_metrics){
@@ -283,8 +326,11 @@ for(metric in edge_metrics) {
     roc <- roc_curve(data = data, variable_param = algorithm, variable_colors = algorithm_colors)
     roc_list <- c(roc_list, list(roc))
     
-    recall <- recall_vs_rank(data = data, variable_param = algorithm, variable_colors = algorithm_colors)
+    recall <- recall_and_enrichment(data = data, variable_param = algorithm, variable_colors = algorithm_colors)$recall_curve
     recall_list <- c(recall_list, list(recall))
+    
+    enrichment <- recall_and_enrichment(data = data, variable_param = algorithm, variable_colors = algorithm_colors, rank_of_interest=n_gt_nodes)$enrichment_boxplot
+    enrichment_list <- c(enrichment_list, list(enrichment))
   }
   
   # Combine plots
@@ -292,7 +338,10 @@ for(metric in edge_metrics) {
   ggsave(paste0('ROC_curves_', metric, '_node_metrics.png'), combined_roc, width = 6, height = 3 * length(roc_list))
   
   combined_recall <- wrap_plots(recall_list, ncol = 1)
-  ggsave(paste0('recall_vs_rank_', metric, '_node_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  ggsave(paste0('recall_curve_', metric, '_node_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  
+  combined_enrichment <- wrap_plots(enrichment_list, ncol = 1)
+  ggsave(paste0('enrichment_boxplot_', metric, '_node_metrics.png'), combined_enrichment, width = 1 + length(enrichment_list), height = 3 * length(enrichment_list))
 }
 
 for(metric in node_metrics) {
@@ -304,6 +353,7 @@ for(metric in node_metrics) {
   
   roc_list <- list()
   recall_list <- list()
+  enrichment_list <- list()
   
   # Vary the algorithm
   for (ranking_alg in algorithms){
@@ -315,8 +365,11 @@ for(metric in node_metrics) {
     roc <- roc_curve(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)
     roc_list <- c(roc_list, list(roc))
     
-    recall <- recall_vs_rank(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)
+    recall <- recall_and_enrichment(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)$recall_curve
     recall_list <- c(recall_list, list(recall))
+    
+    enrichment <- recall_and_enrichment(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors, rank_of_interest=n_gt_nodes)$enrichment_boxplot
+    enrichment_list <- c(enrichment_list, list(enrichment))
   }
   
   # Combine plots
@@ -324,11 +377,15 @@ for(metric in node_metrics) {
   ggsave(paste0('ROC_curves_', metric, '_algorithms.png'), combined_roc, width = 6, height = 3 * length(roc_list))
   
   combined_recall <- wrap_plots(recall_list, ncol = 1)
-  ggsave(paste0('recall_vs_rank_', metric, '_algorithms.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  ggsave(paste0('recall_curve_', metric, '_algorithms.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  
+  combined_enrichment <- wrap_plots(enrichment_list, ncol = 1)
+  ggsave(paste0('enrichment_boxplot_', metric, '_algorithms.png'), combined_enrichment, width = 1 + length(enrichment_list), height = 3 * length(enrichment_list))
   
   
   roc_list <- list()
   recall_list <- list()
+  enrichment_list <- list()
   
   # Vary the edge metric
   for (met in edge_metrics){
@@ -340,8 +397,11 @@ for(metric in node_metrics) {
     roc <- roc_curve(data = data, variable_param = algorithm, variable_colors = algorithm_colors)
     roc_list <- c(roc_list, list(roc))
     
-    recall <- recall_vs_rank(data = data, variable_param = algorithm, variable_colors = algorithm_colors)
+    recall <- recall_and_enrichment(data = data, variable_param = algorithm, variable_colors = algorithm_colors)$recall_curve
     recall_list <- c(recall_list, list(recall))
+    
+    enrichment <- recall_and_enrichment(data = data, variable_param = algorithm, variable_colors = algorithm_colors, rank_of_interest=n_gt_nodes)$enrichment_boxplot
+    enrichment_list <- c(enrichment_list, list(enrichment))
   }
   
   # Combine plots
@@ -349,7 +409,10 @@ for(metric in node_metrics) {
   ggsave(paste0('ROC_curves_', metric, '_edge_metrics.png'), combined_roc, width = 6, height = 3 * length(roc_list))
   
   combined_recall <- wrap_plots(recall_list, ncol = 1)
-  ggsave(paste0('recall_vs_rank_', metric, '_edge_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  ggsave(paste0('recall_curve_', metric, '_edge_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  
+  combined_enrichment <- wrap_plots(enrichment_list, ncol = 1)
+  ggsave(paste0('enrichment_boxplot_', metric, '_edge_metrics.png'), combined_enrichment, width = 1 + length(enrichment_list), height = 3 * length(enrichment_list))
 }
 
 for(ranking_alg in algorithms) {
@@ -361,6 +424,7 @@ for(ranking_alg in algorithms) {
   
   roc_list <- list()
   recall_list <- list()
+  enrichment_list <- list()
   
   # Vary the edge metric
   for (met in edge_metrics){
@@ -372,8 +436,11 @@ for(ranking_alg in algorithms) {
     roc <- roc_curve(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)
     roc_list <- c(roc_list, list(roc))
     
-    recall <- recall_vs_rank(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)
+    recall <- recall_and_enrichment(data = data, variable_param = node_metric, variable_colors = node_metrics_colors)$recall_curve
     recall_list <- c(recall_list, list(recall))
+    
+    enrichment <- recall_and_enrichment(data = data, variable_param = node_metric, variable_colors = node_metrics_colors, rank_of_interest=n_gt_nodes)$enrichment_boxplot
+    enrichment_list <- c(enrichment_list, list(enrichment))
   }
   
   # Combine plots
@@ -381,10 +448,14 @@ for(ranking_alg in algorithms) {
   ggsave(paste0('ROC_curves_', ranking_alg, '_edge_metrics.png'), combined_roc, width = 6, height = 3 * length(roc_list))
   
   combined_recall <- wrap_plots(recall_list, ncol = 1)
-  ggsave(paste0('recall_vs_rank_', ranking_alg, '_edge_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  ggsave(paste0('recall_curve_', ranking_alg, '_edge_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  
+  combined_enrichment <- wrap_plots(enrichment_list, ncol = 1)
+  ggsave(paste0('enrichment_boxplot_', metric, '_edge_metrics.png'), combined_enrichment, width = 1 + length(enrichment_list), height = 3 * length(enrichment_list))
   
   roc_list <- list()
   recall_list <- list()
+  enrichment_list <- list()
   
   # Vary the node metric
   for (met in node_metrics){
@@ -396,8 +467,11 @@ for(ranking_alg in algorithms) {
     roc <- roc_curve(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)
     roc_list <- c(roc_list, list(roc))
     
-    recall <- recall_vs_rank(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)
+    recall <- recall_and_enrichment(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors)$recall_curve
     recall_list <- c(recall_list, list(recall))
+    
+    enrichment <- recall_and_enrichment(data = data, variable_param = edge_metric, variable_colors = edge_metrics_colors, rank_of_interest=n_gt_nodes)$enrichment_boxplot
+    enrichment_list <- c(enrichment_list, list(enrichment))
   }
   
   # Combine plots
@@ -405,6 +479,9 @@ for(ranking_alg in algorithms) {
   ggsave(paste0('ROC_curves_', ranking_alg, '_node_metrics.png'), combined_roc, width = 6, height = 3 * length(roc_list))
   
   combined_recall <- wrap_plots(recall_list, ncol = 1)
-  ggsave(paste0('recall_vs_rank_', ranking_alg, '_node_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  ggsave(paste0('recall_curve_', ranking_alg, '_node_metrics.png'), combined_recall, width = 6, height = 3 * length(recall_list))
+  
+  combined_enrichment <- wrap_plots(enrichment_list, ncol = 1)
+  ggsave(paste0('enrichment_boxplot_', metric, '_node_metrics.png'), combined_enrichment, width = 1 + length(enrichment_list), height = 3 * length(enrichment_list))
 }
 
