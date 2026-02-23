@@ -131,7 +131,7 @@ roc_curve <- function(data, variable_param, variable_colors){
       title = paste0("ROC Curve: ", metric, ', ', ranking_alg),
       x = "False Positive Rate",
       y = "True Positive Rate",
-      color = stringr::str_replace_all(as_label(enquo(variable_param)), "_", " ")
+      color = str_to_title(str_replace_all(as_label(enquo(variable_param)), "_", " "))
     ) +
     scale_color_manual(values = color_map) +
     scale_fill_manual(values = color_map) +
@@ -177,7 +177,7 @@ recall_vs_rank <- function(data, variable_param, variable_colors){
     labs(
       x = "Rank",
       y = "Recall (TPR)",
-      color = stringr::str_replace_all(as_label(enquo(variable_param)), "_", " ")
+      color = str_to_title(str_replace_all(as_label(enquo(variable_param)), "_", " "))
     ) +
     scale_color_manual(values = color_map) +
     scale_fill_manual(values = color_map) +
