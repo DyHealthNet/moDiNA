@@ -274,7 +274,19 @@ def stat_test_centrality(context1, context2, meta_file, correction='bh', bi_cont
     nodes_diff['test_p'] = 1.0
     nodes_diff['STC'] = 0.0
 
-    # Initialize p-values and STC column in nodes_diff
+    '''
+    # TODO: remove this eventually
+    for node in nodes:
+        if bi_cont == 'ttest':
+            result = sc.ttest_ind(context1[node], context2[node], nan_policy='omit')
+        elif bi_cont == 'mwu':
+            result = sc.mannwhitneyu(context1[node], context2[node], nan_policy='omit')
+        else:
+            raise ValueError(f"Invalid bi_cont '{bi_cont}'. Choose from 'ttest' or 'mwu'.")
+
+        nodes_diff.loc[node, 'test_p'] = result.pvalue
+    '''
+    # Initialize p-values
     p_cat = {}
     p_bi = {}
     p_cont = {}
@@ -327,6 +339,7 @@ def stat_test_centrality(context1, context2, meta_file, correction='bh', bi_cont
 
     # In case a test failed and returned NaN, set p-value to 1.0
     nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
+    #nodes_diff['STC'] = 1 - sc.false_discovery_control(nodes_diff['test_p'], method=correction)
     nodes_diff['STC'] = nodes_diff['STC'].fillna(0.0)
 
     return nodes_diff
@@ -369,23 +382,6 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
     elif edge_metric == 'post-E':
         # Compute differences in edge metrics first
         edges_diff = _subtract_edges(scores1, scores2, metrics=['raw-E'], included_cols=['test_type'])
-        # Min-Max rescaling
-        edges_diff = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
-
-    # Pre-rescaled combined score (pre-CS)
-    elif edge_metric == 'pre-CS':
-        # Compute combined score from rescaled effect size and p-value
-        scores1[edge_metric] = scores1['pre-E'] - scores1['pre-P']
-        scores2[edge_metric] = scores2['pre-E'] - scores2['pre-P']
-
-    # Post-rescaled combined score (post-CS)
-    elif edge_metric == 'post-CS':
-        # Compute combined score from raw effect size and p-value
-        scores1['raw-CS'] = scores1['raw-E'] - scores1['raw-P']
-        scores2['raw-CS'] = scores2['raw-E'] - scores2['raw-P']
-
-        # Compute differences in edge metrics first
-        edges_diff = _subtract_edges(scores1, scores2, metrics=['raw-CS'], included_cols=['test_type'])
         # Min-Max rescaling
         edges_diff = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
 
@@ -470,7 +466,7 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
         edges_diff = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
 
     else:
-        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'pre-P', 'post-P', 'pre-E', 'post-E', 'pre-PE', 'post-PE', 'pre-CS', 'post-CS', 'pre-LS' or 'post-LS', int-IS'.")
+        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'pre-P', 'post-P', 'pre-E', 'post-E', 'pre-PE', 'post-PE', 'pre-LS' or 'post-LS', int-IS'.")
 
     if edges_diff is None:
         # Compute difference in edge scores
