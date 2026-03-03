@@ -76,7 +76,7 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     elif correction == 'by':
         correction = 'benjamini_yek'
     else:
-        raise ValueError(f"Invalid correction method '{correction}'. Choose from: 'bh', 'yek' or 'bonf'.")
+        raise ValueError(f"Invalid correction method '{correction}'. Choose from: 'bh' or 'yek'.")
 
     p_adj = '_p_' + correction
     p_columns = [column for column in column_names if p_adj in column]
@@ -413,12 +413,12 @@ def _separate_types(all_data, meta_file) -> Tuple[pd.DataFrame, pd.DataFrame, pd
     """
 
     # Check if meta_file has an invalid type
-    if not meta_file['type'].str.lower().isin(['categorical', 'binary', 'continuous']).all():
-        raise ValueError("Invalid type found in meta_file. Allowed types are 'categorical', 'binary', and 'continuous'.")
+    if not meta_file['type'].str.lower().isin(['ordinal', 'nominal', 'binary', 'continuous']).all():
+        raise ValueError("Invalid type found in meta_file. Allowed types are 'ordinal', 'nominal', 'binary', and 'continuous'.")
 
     # Extract categorical phenotypes
     cat_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower()
-                                                                .isin(["categorical"])].label)].copy()
+                                                                .isin(["ordinal", "nominal"])].label)].copy()
     # Extract binary phenotypes
     bi_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower()
                                                                .isin(["binary"])].label)].copy()

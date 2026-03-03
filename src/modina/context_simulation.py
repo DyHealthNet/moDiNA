@@ -72,7 +72,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     all_cols = cont_cols + bi_cols + cat_cols
     meta = pd.DataFrame({
         "label": all_cols,
-        "type": ["continuous"] * n_cont + ["binary"] * n_bi + ["categorical"] * n_cat
+        "type": ["continuous"] * n_cont + ["binary"] * n_bi + ["ordinal"] * n_cat
     })
 
     # Initialize lists for ground truth nodes

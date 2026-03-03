@@ -1,5 +1,5 @@
 from modina.statistics_utils import *
-from modina.context_net_inference import _separate_types
+from modina.context_net_inference import _separate_types, _df_to_numpy
 
 import os
 from typing import Optional, Tuple
@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import igraph as ig
 import scipy.stats as sc
+import napy
 
 
 # Differential network computation
@@ -264,7 +265,7 @@ def pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E'):
 
 
 # Compute absolute mean difference and statistical significance for each node between two contexts
-def stat_test_centrality(context1, context2, meta_file, correction='bh', bi_cont='mwu'):
+def stat_test_centrality(context1, context2, meta_file, correction='bh'):
     if not context1.columns.equals(context2.columns):
         raise ValueError('Context a and b need to have the same structure.')
 
@@ -274,72 +275,83 @@ def stat_test_centrality(context1, context2, meta_file, correction='bh', bi_cont
     nodes_diff['test_p'] = 1.0
     nodes_diff['STC'] = 0.0
 
-    '''
-    # TODO: remove this eventually
-    for node in nodes:
-        if bi_cont == 'ttest':
-            result = sc.ttest_ind(context1[node], context2[node], nan_policy='omit')
-        elif bi_cont == 'mwu':
-            result = sc.mannwhitneyu(context1[node], context2[node], nan_policy='omit')
-        else:
-            raise ValueError(f"Invalid bi_cont '{bi_cont}'. Choose from 'ttest' or 'mwu'.")
-
-        nodes_diff.loc[node, 'test_p'] = result.pvalue
-    '''
     # Initialize p-values
-    p_cat = {}
+    p_nom = {}
+    p_ord = {}
     p_bi = {}
     p_cont = {}
 
-    # Separate node types
+    # Separate data types
     cat1, cont1, bi1 = _separate_types(context1, meta_file)
     cat2, cont2, bi2 = _separate_types(context2, meta_file)
-    assert cat1.columns.equals(cat2.columns) and cont1.columns.equals(cont2.columns) and bi1.columns.equals(bi2.columns), 'Context a and b need to have the same structure.'
+    nom1, ord1 = _separate_categorical(cat1, meta_file)
+    nom2, ord2 = _separate_categorical(cat2, meta_file)
 
-    # categorical
-    for node in cat1.columns:
-        table = pd.crosstab(cat1[node], cat2[node])
-        p_cat[node] = sc.chi2_contingency(table).pvalue
+    assert nom1.columns.equals(nom2.columns) and ord1.columns.equals(ord2.columns) and cont1.columns.equals(cont2.columns) and bi1.columns.equals(bi2.columns), 'Context a and b need to have the same structure.'
+
+    # Determine the return type for p-values based on the correction method
+    if correction == 'bh':
+        return_p = 'p_benjamini_hb'
+    elif correction == 'by':
+        return_p = 'p_benjamini_yek'
+    else:
+        raise ValueError(f"Invalid correction method '{correction}'. Choose from: 'bh' or 'yek'.")
+
+    # nominal
+    for node in nom1.columns:
+        combined = pd.DataFrame({node: pd.concat([nom1[node], nom2[node]]), 'context': [0] * len(nom1) + [1] * len(nom2)})
+        combined, _ = _df_to_numpy(combined)
+        result = napy.chi_squared(combined, axis=1, threads=1, use_numba=False, return_types=[return_p])[return_p]
+        p_nom[node] = float(result[0, 1])
+
+    # ordinal
+    for node in ord1.columns:
+        context_info = pd.DataFrame({'context': [0] * len(ord1) + [1] * len(ord2)})
+        context_info, _ = _df_to_numpy(context_info)
+        combined = pd.DataFrame({node: pd.concat([ord1[node], ord2[node]])})
+        combined, _ = _df_to_numpy(combined)
+        result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, return_types = [return_p], use_numba=False)[return_p]
+        p_ord[node] = float(result[0, 0])
 
     # binary
     for node in bi1.columns:
-        table = pd.crosstab(bi1[node], bi2[node])
-        p_bi[node] = sc.chi2_contingency(table).pvalue
+        combined = pd.DataFrame({node: pd.concat([bi1[node], bi2[node]]), 'context': [0] * len(bi1) + [1] * len(bi2)})
+        combined, _ = _df_to_numpy(combined)
+        result = napy.chi_squared(combined, axis=1, threads=1, use_numba=False, return_types=[return_p])[return_p]
+        p_bi[node] = float(result[0, 1])
 
     # continuous
     for node in cont1.columns:
-        if bi_cont == 'mwu':
-            p_cont[node] = sc.mannwhitneyu(cont1[node], cont2[node], nan_policy='omit').pvalue
-        elif bi_cont == 'ttest':
-            p_cont[node] = sc.ttest_ind(cont1[node], cont2[node], nan_policy='omit', equal_var=False).pvalue
-        elif bi_cont == 'anova':
-            p_cont[node] = sc.f_oneway(cont1[node], cont2[node], nan_policy='omit', equal_var=False).pvalue
-        elif bi_cont == 'kruskal':
-            p_cont[node] = sc.kruskal(cont1[node], cont2[node], nan_policy='omit').pvalue
-        else:
-            raise ValueError(f"Invalid test type '{bi_cont}' for comparing continuous variables across contexts using the STC metric. Choose from 'mwu', 'ttest', 'anova', or 'kruskal'.")
+        context_info = pd.DataFrame({'context': [0] * len(cont1) + [1] * len(cont2)})
+        context_info, _ = _df_to_numpy(context_info)
+        combined = pd.DataFrame({node: pd.concat([cont1[node], cont2[node]])})
+        combined, _ = _df_to_numpy(combined)
+        result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, return_types = [return_p], use_numba=False)[return_p]
+        p_cont[node] = float(result[0, 0])
 
-    if p_cat:
-        pvals = pd.Series(p_cat)
-        stc = sc.false_discovery_control(pvals, method=correction)
+    # STC = 1 - p-value
+    if p_ord:
+        pvals = pd.Series(p_ord)
         nodes_diff.loc[pvals.index, 'test_p'] = pvals
-        nodes_diff.loc[pvals.index, 'STC'] = 1 - stc
+        nodes_diff.loc[pvals.index, 'STC'] = 1 - pvals
+
+    if p_nom:
+        pvals = pd.Series(p_nom)
+        nodes_diff.loc[pvals.index, 'test_p'] = pvals
+        nodes_diff.loc[pvals.index, 'STC'] = 1 - pvals
 
     if p_bi:
         pvals = pd.Series(p_bi)
-        stc = sc.false_discovery_control(pvals, method=correction)
         nodes_diff.loc[pvals.index, 'test_p'] = pvals
-        nodes_diff.loc[pvals.index, 'STC'] = 1 -stc
+        nodes_diff.loc[pvals.index, 'STC'] = 1 - pvals
 
     if p_cont:
         pvals = pd.Series(p_cont)
-        stc = sc.false_discovery_control(pvals, method=correction)
         nodes_diff.loc[pvals.index, 'test_p'] = pvals
-        nodes_diff.loc[pvals.index, 'STC'] = 1 - stc
+        nodes_diff.loc[pvals.index, 'STC'] = 1 - pvals
 
     # In case a test failed and returned NaN, set p-value to 1.0
     nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
-    #nodes_diff['STC'] = 1 - sc.false_discovery_control(nodes_diff['test_p'], method=correction)
     nodes_diff['STC'] = nodes_diff['STC'].fillna(0.0)
 
     return nodes_diff
@@ -512,7 +524,7 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     if node_metric == 'STC':
         if meta_file is None:
             raise ValueError("To compute the 'STC' node metric, please provide a 'meta_file' containing the node types.")
-        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, meta_file=meta_file, bi_cont=bi_cont)
+        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, meta_file=meta_file)
 
     # Degree centrality based on pre-P (DC-P)
     elif node_metric == 'DC-P':
@@ -574,4 +586,26 @@ def _subtract_edges(scores1, scores2, metrics, included_cols=None):
         edges_diff[met] = abs(scores1[met] - scores2[met])
 
     return edges_diff
+
+
+def _separate_categorical(cat_data, meta_file) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Separating the categorical data into nominal and ordinal variables
+    :param cat_data: DataFrame with all categorical variables
+    :param meta_file: DataFrame with metadata of the variables
+    :return: tuple with the nominal and ordinal categorical phenotypes
+    """
+
+    # Check if meta_file has an invalid type
+    if not meta_file['type'].str.lower().isin(['ordinal', 'nominal', 'binary', 'continuous']).all():
+        raise ValueError("Invalid type found in meta_file. Allowed types are 'ordinal', 'nominal', 'binary', and 'continuous'.")
+
+    # Extract nominal phenotypes
+    nom_data = cat_data.iloc[:, cat_data.columns.isin(meta_file[meta_file.type.str.lower()
+                                                                .isin(["nominal"])].label)].copy()
+    # Extract ordinal phenotypes
+    ord_data = cat_data.iloc[:, cat_data.columns.isin(meta_file[meta_file.type.str.lower()
+                                                               .isin(["ordinal"])].label)].copy()
+
+    return nom_data, ord_data
 

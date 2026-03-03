@@ -105,7 +105,7 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame], edges_diff: Optional[pd.
 
                 if node_type == 'continuous':
                     rank_cont.append(node)
-                elif node_type == 'categorical':
+                elif node_type in ('ordinal', 'nominal'):
                     rank_cat.append(node)
                 elif node_type == 'binary':
                     rank_bi.append(node)
