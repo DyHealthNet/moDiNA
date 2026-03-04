@@ -1,5 +1,4 @@
-from modina.statistics_utils import *
-from modina.context_net_inference import _separate_types, _df_to_numpy
+from modina.statistics_utils import pre_rescaling, post_rescaling, _df_to_numpy, _separate_types
 
 import os
 from typing import Optional, Tuple
@@ -7,8 +6,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import igraph as ig
-import scipy.stats as sc
-import napy
+import napypi as napy
 
 
 # Differential network computation
@@ -16,7 +14,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
                          edge_metric: Optional[str] = None, node_metric: Optional[str] = None,
                          max_path_length: int = 2, correction: str = 'bh',
                          path: Optional[str] = None, format: str = 'csv',
-                         meta_file: Optional[pd.DataFrame] = None, bi_cont: str = 'mwu') -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+                         meta_file: Optional[pd.DataFrame] = None, test_type: str = 'nonparametric') -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """
     Computation of a differential network defined by a node metric and an edge metric.
     
@@ -31,7 +29,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param path: Optional path to save the differential scores as CSV files. Defaults to None.
     :param format: File format to save the differential network. Options are 'csv' and 'graphml'. Defaults to 'csv'.
     :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
-    :param bi_cont: Test for continuous nodes used in the computation of the 'STC' node metric. Defaults to 'mwu'.
+    :param test_type: Test type to use for continuous nodes in STC metric. Defaults to 'nonparametric'.
     :return: A tuple (edges_diff, nodes_diff) containing the computed differential edges and nodes.
     """
     if edge_metric is None and node_metric is None:
@@ -52,7 +50,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     # Nodes
     if node_metric is not None:
         nodes_diff = compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
-                                         node_metric=node_metric, correction=correction, meta_file=meta_file, bi_cont=bi_cont)
+                                         node_metric=node_metric, correction=correction, meta_file=meta_file, test_type=test_type)
 
     if path is not None:
         if format == 'csv':
@@ -265,7 +263,7 @@ def pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E'):
 
 
 # Compute absolute mean difference and statistical significance for each node between two contexts
-def stat_test_centrality(context1, context2, meta_file, correction='bh'):
+def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric', correction='bh'):
     if not context1.columns.equals(context2.columns):
         raise ValueError('Context a and b need to have the same structure.')
 
@@ -282,10 +280,8 @@ def stat_test_centrality(context1, context2, meta_file, correction='bh'):
     p_cont = {}
 
     # Separate data types
-    cat1, cont1, bi1 = _separate_types(context1, meta_file)
-    cat2, cont2, bi2 = _separate_types(context2, meta_file)
-    nom1, ord1 = _separate_categorical(cat1, meta_file)
-    nom2, ord2 = _separate_categorical(cat2, meta_file)
+    ord1, nom1, cont1, bi1 = _separate_types(context1, meta_file)
+    ord2, nom2, cont2, bi2 = _separate_types(context2, meta_file)
 
     assert nom1.columns.equals(nom2.columns) and ord1.columns.equals(ord2.columns) and cont1.columns.equals(cont2.columns) and bi1.columns.equals(bi2.columns), 'Context a and b need to have the same structure.'
 
@@ -326,7 +322,14 @@ def stat_test_centrality(context1, context2, meta_file, correction='bh'):
         context_info, _ = _df_to_numpy(context_info)
         combined = pd.DataFrame({node: pd.concat([cont1[node], cont2[node]])})
         combined, _ = _df_to_numpy(combined)
-        result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, return_types = [return_p], use_numba=False)[return_p]
+
+        if test_type == 'parametric':
+            result = napy.ttest(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, use_numba=False, return_types=[return_p])[return_p]
+        elif test_type == 'nonparametric':
+            result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, return_types = [return_p], use_numba=False)[return_p]
+        else:
+            raise ValueError(f"Invalid test type '{test_type}' for continuous nodes. Choose from 'parametric' or 'nonparametric'.")
+        
         p_cont[node] = float(result[0, 0])
 
     # STC = 1 - p-value
@@ -492,7 +495,7 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
 
 # Differential node computation
 def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
-                        node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None, bi_cont: str = 'mwu',
+                        node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None, test_type: str = 'nonparametric',
                         path: Optional[str] = None) -> pd.DataFrame:
     """
     Compute differential node scores based on the specified node metric.
@@ -504,7 +507,7 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     :param node_metric: Node metric to compute the differential node scores.
     :param correction: Correction method for multiple testing. Only needed if node_metric is 'STC'. Defaults to 'bh'.
     :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
-    :param bi_cont: Statistical test to compare continuous variables across contexts for the 'STC' node metric. Choose from 'mwu' or 'ttest'. Defaults to 'mwu'.
+    :param test_type: Test type to compare continuous variables across contexts for the 'STC' node metric. Defaults to 'nonparametric'.
     :param path: Optional path to save the differential node scores as a CSV file. Defaults to None.
     :return: A DataFrame containing the computed differential node scores.
     """
@@ -524,7 +527,7 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     if node_metric == 'STC':
         if meta_file is None:
             raise ValueError("To compute the 'STC' node metric, please provide a 'meta_file' containing the node types.")
-        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, meta_file=meta_file)
+        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, meta_file=meta_file, test_type=test_type)
 
     # Degree centrality based on pre-P (DC-P)
     elif node_metric == 'DC-P':
@@ -586,26 +589,4 @@ def _subtract_edges(scores1, scores2, metrics, included_cols=None):
         edges_diff[met] = abs(scores1[met] - scores2[met])
 
     return edges_diff
-
-
-def _separate_categorical(cat_data, meta_file) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Separating the categorical data into nominal and ordinal variables
-    :param cat_data: DataFrame with all categorical variables
-    :param meta_file: DataFrame with metadata of the variables
-    :return: tuple with the nominal and ordinal categorical phenotypes
-    """
-
-    # Check if meta_file has an invalid type
-    if not meta_file['type'].str.lower().isin(['ordinal', 'nominal', 'binary', 'continuous']).all():
-        raise ValueError("Invalid type found in meta_file. Allowed types are 'ordinal', 'nominal', 'binary', and 'continuous'.")
-
-    # Extract nominal phenotypes
-    nom_data = cat_data.iloc[:, cat_data.columns.isin(meta_file[meta_file.type.str.lower()
-                                                                .isin(["nominal"])].label)].copy()
-    # Extract ordinal phenotypes
-    ord_data = cat_data.iloc[:, cat_data.columns.isin(meta_file[meta_file.type.str.lower()
-                                                               .isin(["ordinal"])].label)].copy()
-
-    return nom_data, ord_data
 

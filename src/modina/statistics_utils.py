@@ -1,5 +1,6 @@
 import numpy as np
-
+import pandas as pd
+from typing import Tuple
 
 # Pre-rescaling (Z-score rescaling)
 def pre_rescaling(scores1, scores2, metric):
@@ -87,4 +88,35 @@ def post_rescaling(diff_scores, metric):
 
     return diff_scores
 
+
+def _separate_types(all_data, meta_file) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Separating the data into ordinal, nominal, continuous and binary variables.
+    :param all_data: DataFrame with all data
+    :param meta_file: DataFrame with metadata of the variables
+    :return: tuple with the ordinal, nominal, continuous and binary variables
+    """
+
+    # Check if meta_file has an invalid type
+    if not meta_file['type'].str.lower().isin(['ordinal', 'nominal', 'binary', 'continuous']).all():
+        raise ValueError("Invalid type found in meta_file. Allowed types are 'ordinal', 'nominal', 'binary', and 'continuous'.")
+
+    # Extract ordinal phenotypes
+    ord_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower() == 'ordinal'].label)].copy()
     
+    # Extract nominal phenotypes
+    nom_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower() == 'nominal'].label)].copy()
+
+    # Extract binary phenotypes
+    bi_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower() == 'binary'].label)].copy()
+
+    # Extract continuous phenotypes
+    cont_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower() == 'continuous'].label)].copy()
+
+    return ord_data, nom_data, cont_data, bi_data
+
+
+def _df_to_numpy(df: pd.DataFrame):
+    cols = df.columns
+    df_np = df.to_numpy(dtype=np.float64).copy()
+    return df_np, cols

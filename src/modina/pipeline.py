@@ -13,7 +13,7 @@ import pandas as pd
 # Wrapper function to perform the whole moDiNA pipeline
 def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: Optional[str] = None, node_metric: Optional[str] = None, ranking_alg: str = 'PageRank+',
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None, max_path_length: int=2,
-                     cont_cont: str = 'spearman', bi_cont: str = 'mwu', cont_cat: str = 'kruskal',
+                     test_type: str = 'nonparametric',
                      correction: str = 'bh', num_workers: int=1,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, dict, Optional[pd.DataFrame], Optional[pd.DataFrame], dict]:
     """
@@ -22,9 +22,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param context1: Observed data of Context 1 (rows: samples, columns: variables).
     :param context2: Observed data of Context 2 (rows: samples, columns: variables).
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
-    :param cont_cont: Test for continuous-continuous association scores. Defaults to 'spearman'.
-    :param bi_cont: Test for categorical-continuous association (binary) scores. Defaults to 'mwu'.
-    :param cont_cat: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal'.
+    :param test_type: Type of statistical tests to use for association score calculation. Defaults to 'nonparametric'.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param num_workers: Number of workers for parallel processing. Defaults to 1.
     :param filter_method: Method used for filtering. Defaults to None.
@@ -55,11 +53,9 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
 
     # Score calculation
     logging.info('Computing association scores...')
-    scores1 = compute_context_scores(context_data=context1, meta_file=meta_file, cont_cont=cont_cont,
-                                               bi_cont=bi_cont, cont_cat=cont_cat, correction=correction,
+    scores1 = compute_context_scores(context_data=context1, meta_file=meta_file, test_type=test_type, correction=correction,
                                                num_workers=num_workers, path=scores1_path)
-    scores2 = compute_context_scores(context_data=context2, meta_file=meta_file, cont_cont=cont_cont,
-                                               bi_cont=bi_cont, cont_cat=cont_cat, correction=correction,
+    scores2 = compute_context_scores(context_data=context2, meta_file=meta_file, test_type=test_type, correction=correction,
                                                num_workers=num_workers, path=scores2_path)
     logging.info('Done.')
 
@@ -84,7 +80,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
                                                   max_path_length=max_path_length,
                                                   correction=correction,
                                                   path=project_path, format='csv',
-                                                  meta_file=meta_file, bi_cont=bi_cont)
+                                                  meta_file=meta_file, test_type=test_type)
     logging.info('Done.')
 
     # Ranking
@@ -97,9 +93,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     params = {
         'name1': name1,
         'name2': name2,
-        'cont_cont': cont_cont,
-        'bi_cont': bi_cont,
-        'cont_cat': cont_cat,
+        'test_type': test_type,
         'correction':  correction,
         'filter_method': filter_method,
         'filter_metric': filter_metric,

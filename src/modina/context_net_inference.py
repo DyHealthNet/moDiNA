@@ -1,5 +1,7 @@
 # Adapted from https://github.com/DyHealthNet/DHN-backend.git
 
+from modina.statistics_utils import _df_to_numpy, _separate_types
+
 import numpy as np
 import pandas as pd
 import napypi as napy
@@ -9,35 +11,44 @@ from typing import Optional, Tuple
 EXCLUDED_EFFECTS = {'chi2', 't', 'F', 'U', 'H'}
 
 
-def calculate_association_scores(cat_data, cont_data, bi_data, tests, num_workers=1, nan_value=-89) -> pd.DataFrame:
+def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89) -> pd.DataFrame:
     cont_data = cont_data.copy()
     if not cont_data.select_dtypes(include=[np.number]).shape[1] == cont_data.shape[1]:
         raise ValueError('Continuous data contains non-numeric columns.')
 
-    cat_data = _order_categories(cat_data)
+    # Remap categories to start at 0 and be consecutive integers
+    nom_data = _order_categories(nom_data)
     bi_data = _order_categories(bi_data)
 
-    tests = {k: v.lower() for k, v in tests.items()}
+    cont_nom_results = napy_nom_cont(cont_data, nom_data, test=test_type, num_workers=num_workers, nan_value=nan_value)
+    logging.info("Finished continuous-nominal score calculation.")
+    
+    cont_ord_results = napy_ord_cont(cont_data, ord_data, num_workers=num_workers, nan_value=nan_value)
+    logging.info("Finished continuous-ordinal score calculation.")
 
-    cont_cat_results = napy_cat_cont(cont_data, cat_data, test=tests.get('cont_cat'), num_workers=num_workers, nan_value=nan_value)
-    logging.info("Finished continuous-categorical score creation")
+    bi_cont_results = napy_bi_cont(cont_data, bi_data, test=test_type, num_workers=num_workers, nan_value=nan_value)
+    logging.info("Finished continuous-binary score calculation.")
 
-    bi_cont_results = napy_bi_cont(cont_data, bi_data, test=tests.get('bi_cont'), num_workers=num_workers, nan_value=nan_value)
-    logging.info("Finished continuous-binary score creation")
+    bi_nom_results = napy_bi_nom(nom_data, bi_data, num_workers=num_workers, nan_value=nan_value)
+    logging.info("Finished binary-nominal score calculation.")
 
-    cat_cat_results = napy_cat_cat(cat_data, bi_data, num_workers=num_workers, nan_value=nan_value)
-    logging.info("Finished categorical-categorical score creation")
+    cont_cont_results = napy_cont_cont(cont_data, test=test_type, num_workers=num_workers, nan_value=nan_value)
+    logging.info("Finished continuous-continuous score calculation")
 
-    cont_cont_results = napy_cont_cont(cont_data, test=tests.get('cont_cont'), num_workers=num_workers, nan_value=nan_value)
-    logging.info("Finished continuous-continuous score creation")
+    bi_ord_results = napy_bi_ord(ord_data, bi_data, num_workers=num_workers, nan_value=nan_value)
+    logging.info("Finished binary-ordinal score calculation.")
 
-    scores = _combine_tests(cat_cat_results, cont_cont_results, bi_cont_results, cont_cat_results)
+    ord_nom_results = napy_ord_nom(ord_data, nom_data, num_workers=num_workers, nan_value=nan_value)
+    logging.info("Finished ordinal-nominal score calculation.")
+
+    scores = _combine_tests(cont_nom_results, cont_ord_results, bi_cont_results, bi_nom_results,
+                            cont_cont_results, bi_ord_results, ord_nom_results)
 
     return scores
 
 
 def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
-                           cont_cont: str = 'spearman', bi_cont: str = 'mwu', cont_cat: str = 'kruskal',
+                           test_type: str = 'nonparametric',
                            correction: str = 'bh', num_workers: int = 1,
                            path: Optional[str] = None) -> pd.DataFrame:
     """
@@ -45,9 +56,7 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
 
     :param context_data: The raw context data (rows: samples, columns: variables).
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
-    :param cont_cont: Test for continuous-continuous association scores. Defaults to 'spearman'.
-    :param bi_cont: Test for categorical-continuous association (binary) scores. Defaults to 'mwu'.
-    :param cont_cat: Test for categorical-continuous association (multiple) scores. Defaults to 'kruskal'.
+    :param test_type: Type of tests to use for network inference. Defaults to 'nonparametric'.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param num_workers: Number of workers for parallel processing. Defaults to 1.
     :param path: Optional path to save the computed scores as a CSV file. Defaults to None.
@@ -57,17 +66,11 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     context_data, nan_value = _check_input_data(context=context_data, meta_file=meta_file)
 
     # Separate the data into categorical and continuous data
-    cat, cont, bi = _separate_types(context_data, meta_file)
-
-    # Create dict for test types
-    tests = {
-        "cont_cont": cont_cont,
-        "bi_cont": bi_cont,
-        "cont_cat": cont_cat
-    }
+    ord, nom, cont, bi = _separate_types(context_data, meta_file)
 
     # Calculate scores
-    scores = calculate_association_scores(cat_data=cat, cont_data=cont, bi_data=bi, tests=tests, num_workers=num_workers, nan_value=nan_value)
+    scores = calculate_association_scores(ord_data=ord, nom_data=nom, cont_data=cont, bi_data=bi, 
+                                          test_type=test_type, num_workers=num_workers, nan_value=nan_value)
 
     # Take the adjusted p-value and the corresponding effect size
     column_names = scores.iloc[:, 2:].columns
@@ -104,9 +107,9 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     return scores_final
 
 
-def napy_cat_cat(cat_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
-    # Combine categorical and binary phenotypes for chi-squared test
-    discrete_phenotypes = pd.concat([cat_phenotypes, bi_phenotypes], axis=1)
+def napy_bi_nom(nom_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
+    # Combine nominal and binary phenotypes for chi-squared test
+    discrete_phenotypes = pd.concat([nom_phenotypes, bi_phenotypes], axis=1)
     discrete_phenotypes, cols = _df_to_numpy(discrete_phenotypes)
     if discrete_phenotypes.shape[1] < 2:
         return [None]
@@ -124,79 +127,73 @@ def napy_cat_cat(cat_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_
     return [results]
 
 
-def napy_cat_cont(cont_phenotypes: pd.DataFrame, cat_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
-    if cat_phenotypes.shape[1] < 2:
-        return [None, None]
+def napy_nom_cont(cont_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, test: str='nonparametric', num_workers=8, nan_value=-89):
+    if nom_phenotypes.shape[1] < 1 or cont_phenotypes.shape[1] < 1:
+        return [None]
 
     cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
-    cat_phenotypes, cat_cols = _df_to_numpy(cat_phenotypes)
+    nom_phenotypes, nom_cols = _df_to_numpy(nom_phenotypes)
 
-    cont_out = None
+    result = None
     done_test = None
 
-    if test == 'anova':
-        cont_out = napy.anova(cat_phenotypes, cont_phenotypes, axis=1,
+    if test == 'parametric':
+        result = napy.anova(cat_data=nom_phenotypes, cont_data=cont_phenotypes, axis=1,
                                       threads=num_workers, nan_value=nan_value)
         done_test = "anova"
 
-    elif test == 'kruskal':
-        cont_out = napy.kruskal_wallis(cat_phenotypes, cont_phenotypes, axis=1,
+    elif test == 'nonparametric':
+        result = napy.kruskal_wallis(cat_data=nom_phenotypes, cont_data=cont_phenotypes, axis=1,
                                                threads=num_workers, nan_value=nan_value)
         done_test = "kruskal"
 
     else:
-        raise ValueError(f"Test '{test}' not recognized for categorical-continuous association testing.")
+        raise ValueError(f"Invalid test type '{test}'. Specify 'parametric' or 'nonparametric' for nominal-continuous association testing.")
 
-    return [_napy_formatting(cont_out, [cat_cols, cont_cols], done_test)]
+    return [_napy_formatting(result, [nom_cols, cont_cols], done_test)]
 
 
-def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
-    """
-    Do binary categorical-continuous association testing of binary categorical variables with continuous variables.
-    As the binary categorical variables can be seen as a special case of the categorical variables, this function
-    allows for the same tests as the categorical-continuous association testing. In addition, it also allows for
-    tests specific to binary categorical variables.
-    :param cont_phenotypes: DataFrame with continuous variables
-    :param bi_phenotypes: DataFrame with binary categorical variables
-    :param test: the test to perform
-    :return: DataFrame with the results of the association testing
-    """
-    if bi_phenotypes.shape[1] < 2:
-        return [None, None, None, None]
+def napy_ord_nom(ord_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
+    if nom_phenotypes.shape[1] < 1 or ord_phenotypes.shape[1] < 1:
+        return [None]
+
+    ord_phenotypes, ord_cols = _df_to_numpy(ord_phenotypes)
+    nom_phenotypes, nom_cols = _df_to_numpy(nom_phenotypes)
+
+    result = napy.kruskal_wallis(cat_data=nom_phenotypes, cont_data=ord_phenotypes, axis=1,
+                                            threads=num_workers, nan_value=nan_value)
+    done_test = "kruskal"
+
+    return [_napy_formatting(result, [nom_cols, ord_cols], done_test)]
+
+
+def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, test: str='nonparametric', num_workers=8, nan_value=-89):
+    if bi_phenotypes.shape[1] < 1 or cont_phenotypes.shape[1] < 1:
+        return [None]
 
     if (bi_phenotypes.nunique() > 2).any():
-        raise ValueError("All binary categorical variables cannot have more than two unique values.")
+        raise ValueError("All binary variables must not have more than two unique values.")
 
     cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
     bi_phenotypes_two, bi_cols = _df_to_numpy(bi_phenotypes)
 
-    bi_cont_out = None
+    result = None
     done_test = None
 
-    if test == 'ttest':
-        bi_cont_out = napy.ttest(bi_phenotypes_two, cont_phenotypes, axis=1,
+    if test == 'parametric':
+        result = napy.ttest(bin_data=bi_phenotypes_two, cont_data=cont_phenotypes, axis=1,
                                      threads=num_workers, nan_value=nan_value)
         done_test = "ttest"
 
-    elif test == 'anova':
-        bi_cont_out = napy.anova(bi_phenotypes_two, cont_phenotypes, axis=1,
-                                     threads=num_workers, nan_value=nan_value)
-        done_test = "anova"
-
-    elif test == 'mwu':
-        bi_cont_out = napy.mwu(bi_phenotypes_two, cont_phenotypes, axis=1, threads=num_workers,
+    elif test == 'nonparametric':
+        result = napy.mwu(bin_data=bi_phenotypes_two, cont_data=cont_phenotypes, axis=1, threads=num_workers,
                                    nan_value=nan_value)
         done_test = "mwu"
 
-    elif test == 'kruskal':
-        bi_cont_out = napy.kruskal_wallis(bi_phenotypes_two, cont_phenotypes, axis=1, threads=num_workers,
-                                              nan_value=nan_value)
-        done_test = "kruskal"
-
     else:
-        raise ValueError(f"Test '{test}' not recognized for binary categorical-continuous association testing.")
+        raise ValueError(f"Invalid test type '{test}'. Specify 'parametric' or 'nonparametric' for binary-continuous association testing.")
 
-    results = [_napy_formatting(bi_cont_out, [bi_cols, cont_cols], done_test)]
+    results = [_napy_formatting(result, [bi_cols, cont_cols], done_test)]
 
     # Special case: variables with only one category
     bi_phenotypes_one = bi_phenotypes.loc[:, bi_phenotypes.nunique() <= 1].copy()
@@ -204,7 +201,7 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
 
     if bi_phenotypes_one.shape[1] > 0:
         logging.warning(
-            f'There were categorical variables found with only one category: {bi_cols_one}. '
+            f'There were binary variables found with only one category: {bi_cols_one}. '
             'These will be added as dummy rows with p-value 1.0 and effect size 0.0.')
 
         # For each combination of bi_cols_one and cont_cols, add a row with p-value 1.0 and effect size 0.0
@@ -252,27 +249,114 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
     return results_final
 
 
-def napy_cont_cont(cont_phenotypes: pd.DataFrame, test: str, num_workers=8, nan_value=-89):
+def napy_bi_ord(ord_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
+    if bi_phenotypes.shape[1] < 1 or ord_phenotypes.shape[1] < 1:
+        return [None]
+
+    if (bi_phenotypes.nunique() > 2).any():
+        raise ValueError("All binary variables must not have more than two unique values.")
+
+    ord_phenotypes, ord_cols = _df_to_numpy(ord_phenotypes)
+    bi_phenotypes_two, bi_cols = _df_to_numpy(bi_phenotypes)
+
+    result = napy.mwu(bin_data=bi_phenotypes_two, cont_data=ord_phenotypes, axis=1, threads=num_workers,
+                                nan_value=nan_value)
+    done_test = "mwu"
+
+    results = [_napy_formatting(result, [bi_cols, ord_cols], done_test)]
+
+    # Special case: variables with only one category
+    bi_phenotypes_one = bi_phenotypes.loc[:, bi_phenotypes.nunique() <= 1].copy()
+    bi_phenotypes_one, bi_cols_one = _df_to_numpy(bi_phenotypes_one)
+
+    if bi_phenotypes_one.shape[1] > 0:
+        logging.warning(
+            f'There were binary variables found with only one category: {bi_cols_one}. '
+            'These will be added as dummy rows with p-value 1.0 and effect size 0.0.')
+
+        # For each combination of bi_cols_one and ord_cols, add a row with p-value 1.0 and effect size 0.0
+        for i, df in enumerate(results):
+            if df is None:
+                continue
+
+            p_cols = [col for col in df.columns if "_p_" in col]
+            e_cols = [col for col in df.columns if "_e_" in col]
+
+            special_rows = []
+            for bi_var in bi_cols_one:
+                for ord_var in ord_cols:
+                    row = {
+                        'label1': bi_var,
+                        'label2': ord_var
+                    }
+                    for col in p_cols:
+                        row[col] = 1.0
+                    for col in e_cols:
+                        row[col] = 0.0
+                    special_rows.append(row)
+
+            # Add special case rows to results
+            results[i] = pd.concat([df, pd.DataFrame(special_rows)], ignore_index=True)
+
+    # Replace NaNs
+    results_final = []
+    for df in results:
+        if df is None:
+            results_final.append(None)
+            continue
+
+        df = df.copy()
+        p_cols = [col for col in df.columns if "_p_" in col]
+        e_cols = [col for col in df.columns if "_e_" in col]
+
+        if p_cols:
+            df[p_cols] = df[p_cols].fillna(1.0)
+        if e_cols:
+            df[e_cols] = df[e_cols].fillna(0.0)
+
+        results_final.append(df)
+
+    return results_final
+
+
+def napy_cont_cont(cont_phenotypes: pd.DataFrame, test: str='nonparametric', num_workers=8, nan_value=-89):
     if cont_phenotypes.shape[1] < 2:
-        return [None, None]
+        return [None]
+    
     cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
-    cont_out = None
+    result = None
     done_test = None
 
-    if test == 'pearson':
-        cont_out = napy.pearsonr(cont_phenotypes, nan_value=nan_value, threads=num_workers,
+    if test == 'parametric':
+        result = napy.pearsonr(cont_phenotypes, nan_value=nan_value, threads=num_workers,
                                     axis=1)
         done_test = "pearson"
 
-    elif test == 'spearman':
-        cont_out = napy.spearmanr(cont_phenotypes, threads=num_workers, nan_value=nan_value,
+    elif test == 'nonparametric':
+        result = napy.spearmanr(cont_phenotypes, threads=num_workers, nan_value=nan_value,
                                      axis=1)
         done_test = "spearman"
 
     else:
-        raise ValueError(f"Test '{test}' not recognized for continuous-continuous association testing.")
+        raise ValueError(f"Invalid test type '{test}'. Specify 'parametric' or 'nonparametric' for continuous-continuous association testing.")
 
-    return [_napy_formatting(cont_out, [cont_cols], done_test)]
+    return [_napy_formatting(result, [cont_cols], done_test)]
+
+
+def napy_ord_cont(cont_phenotypes: pd.DataFrame, ord_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
+    if cont_phenotypes.shape[1] < 1 or ord_phenotypes.shape[1] < 1:
+        return [None]
+    
+    combined_phenotypes = pd.concat([cont_phenotypes, ord_phenotypes], axis=1)
+
+    combined_phenotypes, combined_cols = _df_to_numpy(combined_phenotypes)
+    cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
+    ord_phenotypes, ord_cols = _df_to_numpy(ord_phenotypes)
+
+    result = napy.spearmanr(combined_phenotypes, threads=num_workers, nan_value=nan_value, axis=1)
+    done_test = "spearman"
+
+    return [_napy_formatting(result, [combined_cols], done_test, ord_cols=ord_cols.tolist(), cont_cols=cont_cols.tolist())]
 
 
 # Check input format of context data
@@ -320,17 +404,10 @@ def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame) -> Tuple[p
     return context, nan_value
 
 
-def _combine_tests(cat_cat, cont_cont, bi_cont, cont_cat) -> pd.DataFrame:
-    """
-    Combine the non-parametric tests with the parametric tests, giving the non-parametric tests the suffix '_np'.
-    If no non-parametric results are given, empty columns 'pval_np', 'effsize_np', 'test_np' are created.
-    :param np_results: the non-parametric results
-    :param p_results: the parametric results
-    :return: results with both tests combined
-    """
+def _combine_tests(*result_groups) -> pd.DataFrame:
     all_results = []
 
-    for results in [cat_cat, cont_cont, bi_cont, cont_cat]:
+    for results in result_groups:
         merged = None
         for test in results:
             if test is None:
@@ -351,13 +428,9 @@ def _combine_tests(cat_cat, cont_cont, bi_cont, cont_cat) -> pd.DataFrame:
     return out
 
 
-def _df_to_numpy(df: pd.DataFrame):
-    cols = df.columns
-    df_np = df.to_numpy(dtype=np.float64).copy()
-    return df_np, cols
-
-
-def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str, file_name: Optional[str] = None) -> Optional[pd.DataFrame]:
+def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str, 
+                     ord_cols: Optional[list] = None, cont_cols: Optional[list] = None, 
+                     file_name: Optional[str] = None) -> Optional[pd.DataFrame]:
     if not assoc_out:
         return None
 
@@ -385,6 +458,15 @@ def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str, file_na
         **{e_columns[i]: effects_raw[key] for i, key in enumerate(effects_raw)},
     })
 
+    if ord_cols is not None and cont_cols is not None:
+        mask = (
+            (df["label1"].isin(ord_cols) & df["label2"].isin(cont_cols)) |
+            (df["label1"].isin(cont_cols) & df["label2"].isin(ord_cols)) |
+            (df["label1"].isin(ord_cols) & df["label2"].isin(ord_cols))
+        )
+        
+        df = df[mask]
+
     if file_name:
         df.to_csv(file_name, sep=',', index=True, header=False, lineterminator='\n')
 
@@ -402,28 +484,3 @@ def _order_categories(data: pd.DataFrame):
     for col, mapping in order_table.items():
         data[col] = data[col].map(mapping).astype(pd.Int64Dtype())
     return data
-
-
-def _separate_types(all_data, meta_file) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Separating the data into categorical, binary and continuous variables.
-    :param all_data: DataFrame with all data
-    :param meta_file: DataFrame with metadata of the variables
-    :return: tuple with the categorical, continuous and binary phenotypes
-    """
-
-    # Check if meta_file has an invalid type
-    if not meta_file['type'].str.lower().isin(['ordinal', 'nominal', 'binary', 'continuous']).all():
-        raise ValueError("Invalid type found in meta_file. Allowed types are 'ordinal', 'nominal', 'binary', and 'continuous'.")
-
-    # Extract categorical phenotypes
-    cat_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower()
-                                                                .isin(["ordinal", "nominal"])].label)].copy()
-    # Extract binary phenotypes
-    bi_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower()
-                                                               .isin(["binary"])].label)].copy()
-    # Extract continuous phenotypes
-    cont_data = all_data.iloc[:, all_data.columns.isin(meta_file[meta_file.type.str.lower()
-                                                                  .isin(["continuous"])].label)].copy()
-
-    return cat_data, cont_data, bi_data

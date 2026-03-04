@@ -64,7 +64,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     context1_bi = pd.DataFrame(np.nan, index=range(n_samples), columns=bi_cols)
     context2_bi = pd.DataFrame(np.nan, index=range(n_samples), columns=bi_cols)
 
-    cat_cols = [f"cat{i+1}" for i in range(n_cat)]
+    cat_cols = [f"ord{i+1}" for i in range(n_cat)]
     context1_cat = pd.DataFrame(np.nan, index=range(n_samples), columns=cat_cols)
     context2_cat = pd.DataFrame(np.nan, index=range(n_samples), columns=cat_cols)
 
@@ -165,8 +165,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
             mean_vector[nodes.index(node)] = sign * shift
 
     # Gaussian copula
-    u1 = simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr1, mean_vector=np.zeros(n_vars))
-    u2 = simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr2, mean_vector=mean_vector)
+    u1 = _simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr1, mean_vector=np.zeros(n_vars))
+    u2 = _simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr2, mean_vector=mean_vector)
 
     # Transform to marginal distributions using the inverse CDF
     for i, node in enumerate(nodes):
@@ -270,7 +270,7 @@ def _set_corr(nodes, corr_param, corr_matrix1, corr_matrix2, normal_nodes_bi=Non
 
 
 # Adapted from pycop package
-def simu_gaussian(n: int, m: int, corr_matrix: np.ndarray, mean_vector: Optional[np.ndarray]=None):
+def _simu_gaussian(n: int, m: int, corr_matrix: np.ndarray, mean_vector: Optional[np.ndarray]=None):
     """ 
     # Gaussian Copula simulations with a given correlation matrix
 
