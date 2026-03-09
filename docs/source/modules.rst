@@ -1,5 +1,5 @@
-modina
-======
+API
+===
 
 .. toctree::
    :maxdepth: 4

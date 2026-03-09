@@ -1,8 +1,16 @@
-modina package
-==============
+moDiNA
+======
 
 Submodules
 ----------
+
+modina.context\_net\_inference module
+-------------------------------------
+
+.. automodule:: modina.context_net_inference
+   :members:
+   :show-inheritance:
+   :undoc-members:
 
 modina.context\_simulation module
 ---------------------------------
@@ -12,18 +20,34 @@ modina.context\_simulation module
    :show-inheritance:
    :undoc-members:
 
-modina.diffnet module
----------------------
+modina.diff\_net\_construction module
+-------------------------------------
 
-.. automodule:: modina.diffnet
+.. automodule:: modina.diff_net_construction
    :members:
    :show-inheritance:
    :undoc-members:
 
-modina.score\_calculation module
---------------------------------
+modina.edge\_filtering module
+-----------------------------
 
-.. automodule:: modina.score_calculation
+.. automodule:: modina.edge_filtering
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+modina.pipeline module
+----------------------
+
+.. automodule:: modina.pipeline
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+modina.ranking module
+---------------------
+
+.. automodule:: modina.ranking
    :members:
    :show-inheritance:
    :undoc-members:

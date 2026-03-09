@@ -2,3 +2,5 @@ src/modina/__pycache__/
 dist/
 src/moDiNA.egg-info/
 docs/build/
+docs/_build/
+docs/source/_templates/
