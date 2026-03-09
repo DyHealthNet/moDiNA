@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import igraph as ig
 import napypi as napy
+import logging
 
 
 # Differential network computation
@@ -14,7 +15,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
                          edge_metric: Optional[str] = None, node_metric: Optional[str] = None,
                          max_path_length: int = 2, correction: str = 'bh',
                          path: Optional[str] = None, format: str = 'csv',
-                         meta_file: Optional[pd.DataFrame] = None, test_type: str = 'nonparametric') -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+                         meta_file: Optional[pd.DataFrame] = None, test_type: str = 'nonparametric', nan_value: Optional[int] = None) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """
     Computation of a differential network defined by a node metric and an edge metric.
     
@@ -30,6 +31,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param format: File format to save the differential network. Options are 'csv' and 'graphml'. Defaults to 'csv'.
     :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
     :param test_type: Test type to use for continuous nodes in STC metric. Defaults to 'nonparametric'.
+    :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
     :return: A tuple (edges_diff, nodes_diff) containing the computed differential edges and nodes.
     """
     if edge_metric is None and node_metric is None:
@@ -50,7 +52,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     # Nodes
     if node_metric is not None:
         nodes_diff = compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
-                                         node_metric=node_metric, correction=correction, meta_file=meta_file, test_type=test_type)
+                                         node_metric=node_metric, correction=correction, meta_file=meta_file, test_type=test_type, nan_value=nan_value)
 
     if path is not None:
         if format == 'csv':
@@ -263,9 +265,35 @@ def pagerank_centrality(nodes_diff, scores1, scores2, metric='pre-E'):
 
 
 # Compute absolute mean difference and statistical significance for each node between two contexts
-def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric', correction='bh'):
+def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric', correction='bh', nan_value: Optional[int] = None):
     if not context1.columns.equals(context2.columns):
         raise ValueError('Context a and b need to have the same structure.')
+    
+    # Search for non-numeric and NaN values
+    if context1.apply(lambda col: pd.to_numeric(col, errors="coerce").isna()).values.any() > 0 or context2.apply(lambda col: pd.to_numeric(col, errors="coerce").isna()).values.any() > 0:
+        if nan_value is not None:
+            logging.warning(f'The context data contains non-numeric or NaN values. These will be replaced by the specified nan_value {nan_value}.')
+
+            context1 = context1.apply(pd.to_numeric, errors="coerce")
+            context1 = context1.fillna(nan_value)
+
+            context2 = context2.apply(pd.to_numeric, errors="coerce")
+            context2 = context2.fillna(nan_value)
+        
+        else:
+            raise ValueError('The context data contains non-numeric or NaN values. Please clean the data and/or specify a nan_value to replace these values.')
+    
+    else:
+        if nan_value is None:
+            # Find a value that does not exist in the data use as nan_value for napy
+            existing = set(context1.stack().values) | set(context2.stack().values)
+            while True:
+                nan_value = np.random.randint(-10**5, -10**3)
+                if nan_value not in existing:
+                    break
+            
+            logging.warning(f'No nan_value was specified for the context data. For statistical tests, the randomly generated value {nan_value} will be used.'
+                            'If you want to specify a different value, please provide it as an argument.')
 
     # Initialize nodes_diff DataFrame
     nodes = context1.columns
@@ -297,7 +325,7 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
     for node in nom1.columns:
         combined = pd.DataFrame({node: pd.concat([nom1[node], nom2[node]]), 'context': [0] * len(nom1) + [1] * len(nom2)})
         combined, _ = _df_to_numpy(combined)
-        result = napy.chi_squared(combined, axis=1, threads=1, use_numba=False, return_types=[return_p])[return_p]
+        result = napy.chi_squared(combined, axis=1, threads=1, use_numba=False, return_types=[return_p], nan_value=nan_value)[return_p]
         p_nom[node] = float(result[0, 1])
 
     # ordinal
@@ -306,14 +334,14 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
         context_info, _ = _df_to_numpy(context_info)
         combined = pd.DataFrame({node: pd.concat([ord1[node], ord2[node]])})
         combined, _ = _df_to_numpy(combined)
-        result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, return_types = [return_p], use_numba=False)[return_p]
+        result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, return_types = [return_p], use_numba=False, nan_value=nan_value)[return_p]
         p_ord[node] = float(result[0, 0])
 
     # binary
     for node in bi1.columns:
         combined = pd.DataFrame({node: pd.concat([bi1[node], bi2[node]]), 'context': [0] * len(bi1) + [1] * len(bi2)})
         combined, _ = _df_to_numpy(combined)
-        result = napy.chi_squared(combined, axis=1, threads=1, use_numba=False, return_types=[return_p])[return_p]
+        result = napy.chi_squared(combined, axis=1, threads=1, use_numba=False, return_types=[return_p], nan_value=nan_value)[return_p]
         p_bi[node] = float(result[0, 1])
 
     # continuous
@@ -324,9 +352,9 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
         combined, _ = _df_to_numpy(combined)
 
         if test_type == 'parametric':
-            result = napy.ttest(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, use_numba=False, return_types=[return_p])[return_p]
+            result = napy.ttest(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, use_numba=False, return_types=[return_p], nan_value=nan_value)[return_p]
         elif test_type == 'nonparametric':
-            result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, return_types = [return_p], use_numba=False)[return_p]
+            result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = 1, return_types = [return_p], use_numba=False, nan_value=nan_value)[return_p]
         else:
             raise ValueError(f"Invalid test type '{test_type}' for continuous nodes. Choose from 'parametric' or 'nonparametric'.")
         
@@ -495,7 +523,8 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
 
 # Differential node computation
 def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
-                        node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None, test_type: str = 'nonparametric',
+                        node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None, test_type: str = 'nonparametric', 
+                        nan_value: Optional[int] = None,
                         path: Optional[str] = None) -> pd.DataFrame:
     """
     Compute differential node scores based on the specified node metric.
@@ -508,6 +537,7 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     :param correction: Correction method for multiple testing. Only needed if node_metric is 'STC'. Defaults to 'bh'.
     :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
     :param test_type: Test type to compare continuous variables across contexts for the 'STC' node metric. Defaults to 'nonparametric'.
+    :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
     :param path: Optional path to save the differential node scores as a CSV file. Defaults to None.
     :return: A DataFrame containing the computed differential node scores.
     """
@@ -527,7 +557,7 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     if node_metric == 'STC':
         if meta_file is None:
             raise ValueError("To compute the 'STC' node metric, please provide a 'meta_file' containing the node types.")
-        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, meta_file=meta_file, test_type=test_type)
+        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, meta_file=meta_file, test_type=test_type, nan_value=nan_value)
 
     # Degree centrality based on pre-P (DC-P)
     elif node_metric == 'DC-P':

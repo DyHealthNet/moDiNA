@@ -13,7 +13,7 @@ import pandas as pd
 # Wrapper function to perform the whole moDiNA pipeline
 def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: Optional[str] = None, node_metric: Optional[str] = None, ranking_alg: str = 'PageRank+',
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None, max_path_length: int=2,
-                     test_type: str = 'nonparametric',
+                     test_type: str = 'nonparametric', nan_value: Optional[int] = None,
                      correction: str = 'bh', num_workers: int=1,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, dict, Optional[pd.DataFrame], Optional[pd.DataFrame], dict]:
     """
@@ -23,6 +23,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param context2: Observed data of Context 2 (rows: samples, columns: variables).
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
     :param test_type: Type of statistical tests to use for association score calculation. Defaults to 'nonparametric'.
+    :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param num_workers: Number of workers for parallel processing. Defaults to 1.
     :param filter_method: Method used for filtering. Defaults to None.
@@ -54,9 +55,9 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     # Score calculation
     logging.info('Computing association scores...')
     scores1 = compute_context_scores(context_data=context1, meta_file=meta_file, test_type=test_type, correction=correction,
-                                               num_workers=num_workers, path=scores1_path)
+                                               num_workers=num_workers, path=scores1_path, nan_value=nan_value)
     scores2 = compute_context_scores(context_data=context2, meta_file=meta_file, test_type=test_type, correction=correction,
-                                               num_workers=num_workers, path=scores2_path)
+                                               num_workers=num_workers, path=scores2_path, nan_value=nan_value)
     logging.info('Done.')
 
     # Filtering
@@ -80,7 +81,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
                                                   max_path_length=max_path_length,
                                                   correction=correction,
                                                   path=project_path, format='csv',
-                                                  meta_file=meta_file, test_type=test_type)
+                                                  meta_file=meta_file, test_type=test_type, nan_value=nan_value)
     logging.info('Done.')
 
     # Ranking

@@ -50,7 +50,7 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
 def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
                            test_type: str = 'nonparametric',
                            correction: str = 'bh', num_workers: int = 1,
-                           path: Optional[str] = None) -> pd.DataFrame:
+                           path: Optional[str] = None, nan_value: Optional[int] = None) -> pd.DataFrame:
     """
     Compute association scores for a given context.
 
@@ -60,10 +60,11 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param num_workers: Number of workers for parallel processing. Defaults to 1.
     :param path: Optional path to save the computed scores as a CSV file. Defaults to None.
+    :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
     :return: A pd.DataFrame containing the computed association scores.
     """
     # Check nan values and input format
-    context_data, nan_value = _check_input_data(context=context_data, meta_file=meta_file)
+    context_data, nan_value = _check_input_data(context=context_data, meta_file=meta_file, nan_value=nan_value)
 
     # Separate the data into categorical and continuous data
     ord, nom, cont, bi = _separate_types(context_data, meta_file)
@@ -360,12 +361,13 @@ def napy_ord_cont(cont_phenotypes: pd.DataFrame, ord_phenotypes: pd.DataFrame, n
 
 
 # Check input format of context data
-def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
+def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value: Optional[int] = None) -> Tuple[pd.DataFrame, int]:
     """
-    Check if the input data is in the expected format and identify nan values.
+    Check if the input data is in the expected format and check for missing values.
 
     :param context: The context data to check.
     :param meta_file: Metadata file containing one row per variable in the context data.
+    :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present.
     :return: The checked context data.
     """
     # Check if context is a DataFrame
@@ -390,16 +392,26 @@ def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame) -> Tuple[p
 
     # Search for non-numeric and NaN values
     if context.apply(lambda col: pd.to_numeric(col, errors="coerce").isna()).values.any() > 0:
-        logging.warning('The context data contains non-numeric or NaN values.')
+        if nan_value is not None:
+            logging.warning(f'The context data still contains non-numeric or NaN values. These will be replaced by the specified nan_value {nan_value}.')
 
-    # Replace non-numeric values with a numeric value that does not exist in the data
-    existing = set(pd.to_numeric(context.stack(), errors="coerce").dropna().values)
-    while True:
-        nan_value = np.random.randint(-10**5, -10**3)
-        if nan_value not in existing:
-            break
-
-    context = context.fillna(nan_value)
+            context = context.apply(pd.to_numeric, errors="coerce")
+            context = context.fillna(nan_value)
+        
+        else:
+            raise ValueError('The context data contains non-numeric or NaN values. Please clean the data and/or specify a nan_value to replace these values.')
+    
+    else:
+        if nan_value is None:
+            # Find a value that does not exist in the data use as nan_value for napy
+            existing = set(context.stack().values)
+            while True:
+                nan_value = np.random.randint(-10**5, -10**3)
+                if nan_value not in existing:
+                    break
+        
+        logging.warning(f'No nan_value was specified for the context data. For statistical tests, the randomly generated value {nan_value} will be used.'
+                          'If you want to specify a different value, please provide it as an argument.')
 
     return context, nan_value
 
