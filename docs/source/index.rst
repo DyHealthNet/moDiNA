@@ -1,12 +1,3 @@
-.. moDiNA documentation master file, created by
-   sphinx-quickstart on Wed Oct 29 22:46:27 2025.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
-
-
-
-
 moDiNA: Differential Network Analysis of Mixed-Type Multi-Omics Data 
 ====================
 
@@ -26,43 +17,38 @@ It compares two biologically distinct contexts and constructs a ranked different
 The framework supports multiple data types, including continuous, binary, nominal, and ordinal categorical variables.
 All processing steps are configurable through a user-defined configuration file, allowing flexible adaptation to different datasets and analysis goals.
 
-The *moDiNA* workflow is organized into seven main steps:
+The **moDiNA** workflow is organized into six main steps:
 
-1. Launch
-~~~~~~~~~
+1. Launch and Context Simulation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-*moDiNA* can be applied to real-world multi-omics datasets or to artificially simulated data, enabling both practical analyses and controlled benchmarking studies.
+**moDiNA** supports both :ref:`real-world <real_world>` multi-omics datasets and :ref:`simulated <simulations>` data, enabling practical analyses as well as controlled benchmarking studies.  
+For simulations, context data can be generated via Gaussian copula sampling, allowing users to control the magnitude and frequency of differential effects across contexts.
 
-2. Context Simulation
-~~~~~~~~~~~~~~~~~~~~~
-
-For simulation studies, artificial context data can be generated using Gaussian copula sampling.
-This allows users to control the magnitude and frequency of differential effects between contexts.
-
-3. Context Network Inference
+2. Context Network Inference
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 For each context, a network is inferred by computing pairwise statistical associations between features.
 The implementation relies on NApy, which provides statistical tests for mixed data types and enhanced handling of missing values.
 
-4. Filtering
-~~~~~~~~~~~~
+3. Network Filtering
+~~~~~~~~~~~~~~~~~~~~
 
 Optional edge filtering methods can be applied to the context-specific networks to remove weak or insignificant associations.
 
-5. Differential Network Inference
+4. Differential Network Inference
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Node- and edge-level information from the context-specific networks is aggregated to construct a differential network.
 Multiple metrics can be used, incorporating p-values (P), effect sizes (E), or raw observations (obs) to quantify the differences across contexts.
 
-6. Node and Edge Ranking
+5. Node and Edge Ranking
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 Nodes and edges in the differential network are ranked using various network-based ranking algorithms.
 These algorithms differ in how they integrate node and edge scores and whether they consider the direction of differential effects.
 
-7. Evaluation
+6. Evaluation
 ~~~~~~~~~~~~~
 
 Using the provided :doc:`Nextflow pipeline <nextflow>`, multiple configurations can be systematically evaluated for their ranking performance and similarity across simulation scenarios.
