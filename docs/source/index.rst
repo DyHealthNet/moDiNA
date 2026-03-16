@@ -1,12 +1,13 @@
 moDiNA: Differential Network Analysis of Mixed-Type Multi-Omics Data 
-====================
+====================================================================
 
 .. figure:: _static/moDiNA_Introduction.png
    :alt: Overview of the moDiNA pipeline
    :width: 800px
    :align: center
 
-   **Figure 1:** Overview of the moDiNA pipeline. Created with BioRender.com.
+   **Figure 1:** Overview of the moDiNA pipeline. 
+   Created with BioRender.com.
 
 Overview
 --------

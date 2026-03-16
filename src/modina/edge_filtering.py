@@ -32,6 +32,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         raise ValueError('scores1 and scores2 need to have the same structure and order of edges.')
 
     # Rescaling
+    #TODO: change pre-E and pre-P to E and P (since the metric names should only correspond to differential scores)
     if not 'pre-E' in scores1.columns or not 'pre-E' in scores2.columns:
         scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-E') 
     if not 'pre-P' in scores1.columns or not 'pre-P' in scores2.columns:

@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 from typing import Tuple
 
-# Pre-rescaling (Z-score rescaling)
+# Pre-rescaling (Z-score normalization)
+# TODO: implement a filtering version
 def pre_rescaling(scores1, scores2, metric):
     scores1 = scores1.copy()
     scores2 = scores2.copy()
@@ -29,7 +30,7 @@ def pre_rescaling(scores1, scores2, metric):
             scores2_filtered = scores2[scores2['test_type'] == test]
             values = np.concatenate([scores1_filtered[metric_raw].to_numpy(), scores2_filtered[metric_raw].to_numpy()])
 
-            # Min-Max normalization
+            # Z-score normalization
             mean = np.mean(values)
             std = np.std(values)
 
@@ -52,7 +53,7 @@ def pre_rescaling(scores1, scores2, metric):
     return scores1, scores2
 
 
-# Post-rescaling
+# Post-rescaling (Min-Max normalization)
 def post_rescaling(diff_scores, metric):
     diff_scores = diff_scores.copy()
 
