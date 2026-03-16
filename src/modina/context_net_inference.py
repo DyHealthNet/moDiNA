@@ -8,7 +8,7 @@ import napypi as napy
 import logging
 from typing import Optional, Tuple
 
-EXCLUDED_EFFECTS = {'chi2', 't', 'F', 'U', 'H'}
+EXCLUDED_EFFECTS = {'chi2', 'phi', 't', 'F', 'U', 'H'}
 
 
 def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89) -> pd.DataFrame:
@@ -410,8 +410,11 @@ def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value:
                 if nan_value not in existing:
                     break
         
-        logging.warning(f'No nan_value was specified for the context data. For statistical tests, the randomly generated value {nan_value} will be used.'
-                          'If you want to specify a different value, please provide it as an argument.')
+        logging.warning(f'The context data does not contain any missing values. '
+                        f'For statistical tests, the randomly generated value {nan_value} will be used as '
+                        f'the NaN replacement, as this value does not occur in the data. '
+                        f'If you want to specify a different value, please provide it via the \'nan_value\' argument.'
+)
 
     return context, nan_value
 
