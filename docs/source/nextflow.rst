@@ -1,2 +1,2 @@
-Nextflow
+Nextflow Pipeline
 ========

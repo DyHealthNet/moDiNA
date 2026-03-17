@@ -63,8 +63,8 @@ Using the provided :doc:`Nextflow pipeline <nextflow>`, multiple configurations 
    :maxdepth: 2
    :caption: Contents:
 
-   installation
-   tutorial
-   nextflow
-   modules
+   How to Use moDiNA <how_to_use_modina>
+   Python Package <python_package>
+   Nextflow Pipeline <nextflow>
+   API <api>
 
