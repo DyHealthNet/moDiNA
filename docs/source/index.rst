@@ -66,5 +66,6 @@ Using the provided :doc:`Nextflow pipeline <nextflow>`, multiple configurations 
    How to Use moDiNA <how_to_use_modina>
    Python Package <python_package>
    Nextflow Pipeline <nextflow>
+   Citation <citation>
    API <api>
 
