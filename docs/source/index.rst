@@ -24,29 +24,29 @@ The **moDiNA** workflow is organized into six main steps:
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **moDiNA** supports both :ref:`real-world <real_world>` multi-omics datasets and :ref:`simulated <simulations>` data, enabling practical analyses as well as controlled benchmarking studies.  
-For simulations, context data can be generated via Gaussian copula sampling, allowing users to control the magnitude and frequency of differential effects across contexts.
+For :ref:`simulations <simulations>`, context data can be generated via Gaussian copula sampling, allowing users to control the magnitude and frequency of differential effects across contexts.
 
 2. Context Network Inference
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For each context, a network is inferred by computing pairwise statistical associations between features.
+For each dataset, a :ref:`context-specific network <net_inference>` is inferred by computing pairwise statistical associations between variables.
 The implementation relies on NApy, which provides statistical tests for mixed data types and enhanced handling of missing values.
 
 3. Network Filtering
 ~~~~~~~~~~~~~~~~~~~~
 
-Optional edge filtering methods can be applied to the context-specific networks to remove weak or insignificant associations.
+Optional :ref:`edge filtering <filtering>` methods can be applied to the context-specific networks to remove weak or insignificant associations.
 
 4. Differential Network Inference
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Node- and edge-level information from the context-specific networks is aggregated to construct a differential network.
+Node- and edge-level information from the context-specific networks is aggregated to construct a :ref:`differential network <diffnet>`.
 Multiple metrics can be used, incorporating p-values (P), effect sizes (E), or raw observations (obs) to quantify the differences across contexts.
 
 5. Node and Edge Ranking
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Nodes and edges in the differential network are ranked using various network-based ranking algorithms.
+Nodes and edges in the differential network are :ref:`ranked <ranking>` using various network-based ranking algorithms.
 These algorithms differ in how they integrate node and edge scores and whether they consider the direction of differential effects.
 
 6. Evaluation

@@ -10,13 +10,13 @@ a dedicated :doc:`Nextflow pipeline <nextflow>` is provided.
 Installation 
 --------------
 
-moDiNA can be installed using Conda, venv, Docker of from source. If you face any issues, feel free to open an issue on `GitHub <https://github.com/DyHealthNet/moDiNA/issues>`_. 
+moDiNA can be installed using Conda, Docker of from source. If you face any issues, feel free to open an issue on `GitHub <https://github.com/DyHealthNet/moDiNA/issues>`_. 
 
 
 .. _conda:
 
 With Conda
-~~~~~~~~~~~~~~~
+~~~~~~~~~~
 
 Currently, the **moDiNA** package is only available on `GitHub <https://github.com/DyHealthNet/moDiNA>`_.
 **moDiNA** requires Python version 3.11.
@@ -34,16 +34,18 @@ Then create and activate a new environment:
    mamba create -n modina_env python=3.11
    mamba activate modina_env
 
+
 Next, install the package:
 
 .. code-block:: bash
 
    pip install git+https://github.com/DyHealthNet/moDiNA.git
 
+
 .. _docker:
 
 With Docker
-~~~~~~~~~~~~~~~
+~~~~~~~~~~~
 
 moDiNA is available as Docker image.
 
@@ -64,7 +66,7 @@ Run the image:
 .. _source:
 
 From Source
-~~~~~~~~~~~~~~~
+~~~~~~~~~~~
 
 To install moDiNA from source, clone the repository and install the package using pip:
 
@@ -109,6 +111,7 @@ The tables below show an example of a context DataFrame and the corresponding me
    +--------+-----------+-----------+--------+---------------+-----------+
    | S4     | 3.18      | 4.95      | 1      | 2             | 2         |
    +--------+-----------+-----------+--------+---------------+-----------+
+
 
 .. table:: Metadata
 
@@ -181,6 +184,7 @@ Example:
         corr=0.6
     )
 
+
 .. _analysis:
 Differential Network Analysis
 -----------------------------
@@ -207,6 +211,16 @@ Parameters:
 - ``num_workers``: Number of parallel workers used during score computation. Defaults to ``1``.
 - ``project_path``: Optional directory where intermediate results and output files will be stored.
 - ``name1``, ``name2``: Names of the two contexts used for labeling and output file generation.
+
+
+.. tip::
+
+    Based on an extensive benchmark analysis performed on simulated data, we recommend the following pipeline configuration:
+
+    - Edge Metric: ``pre-LS``
+    - Node Metric: ``STC``
+    - Ranking Algorithm: ``PageRank+``
+
 
 Returns:
 
@@ -236,6 +250,7 @@ Example:
         filter_metric='pre-P',
         filter_rule='zero'
     )
+
 
 .. note::
     If a specific step of the pipeline needs to be recomputed or adjusted, it may be useful to execute
@@ -300,6 +315,7 @@ The table below provides an overview of all implemented statistical tests.
      - Bin–Bin, Bin–Nom, Nom–Nom
      - P, NP
 
+
 Parameters:
 
 - ``context_data``: pandas DataFrame containing the observed data (rows: samples, columns: variables).
@@ -330,6 +346,7 @@ Example:
         nan_value=-999
     )
 
+
 .. _filtering:
 Edge Filtering
 ~~~~~~~~~~~~~~
@@ -358,10 +375,12 @@ Parameters:
 - ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'`` .
 - ``path``: Optional path to save the filtered scores and context data as CSV files. Defaults to None.
 
+
 .. warning::
     Currently, it is not recommended to use ``pre-E`` as a filter metric. Ordering and thresholding Z-score-normalized effect sizes
     can inadvertently remove highly important edges with large negative effect sizes. 
     This issue will be addressed in an upcoming update. In the meantime, please use ``pre-P`` instead.
+
 
 Returns:
 
@@ -412,6 +431,7 @@ Examples:
         filter_rule='zero'
     )
 
+
 .. note::
     Edge filtering can substantially reduce the runtime of **moDiNA** for large datasets. It is especially recommended
     when using the computationally heavy ``int-IS`` edge metric to construct the differential network. 
@@ -427,6 +447,7 @@ Differential Network Construction
 
    **Figure 1:** (A) Effect size normalization and (B) definition of differential edge and node metrics. 
    Created with BioRender.com.
+
 
 Two context-specific networks are aggregated into a differential network using a 
 variety of node- and edge-level metrics provided in the ``compute_diff_network`` function. 
@@ -473,6 +494,7 @@ Example:
         test_type='nonparametric',
         meta_file=meta
     )
+
 
 .. _ranking:
 Ranking
