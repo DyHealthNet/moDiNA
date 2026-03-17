@@ -1,9 +1,77 @@
-Python package
+Python Package
 ==============
 
 In most cases, moDiNA can be conveniently used as a standalone Python package. 
 For users interested in systematically comparing results across multiple moDiNA configurations, 
 a dedicated :doc:`Nextflow pipeline <nextflow>` is provided.
+
+
+
+Installation 
+--------------
+
+moDiNA can be installed using Conda, venv, Docker of from source. If you face any issues, feel free to open an issue on `GitHub <https://github.com/DyHealthNet/moDiNA/issues>`_. 
+
+
+.. _conda:
+
+With Conda
+~~~~~~~~~~~~~~~
+
+Currently, the **moDiNA** package is only available on `GitHub <https://github.com/DyHealthNet/moDiNA>`_.
+**moDiNA** requires Python version 3.11.
+
+It is recommended to install **moDiNA** in a clean conda (`Miniconda <https://www.anaconda.com/docs/getting-started/miniconda/main>`_) environment.
+We suggest using `mamba <https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html>`_, a faster drop-in replacement for conda that
+improves dependency resolution. Mamba is automatically installed when
+using `Miniforge <https://github.com/conda-forge/miniforge>`_.
+
+First, follow the installation instructions for your operating system.
+Then create and activate a new environment:
+
+.. code-block:: bash
+
+   mamba create -n modina_env python=3.11
+   mamba activate modina_env
+
+Next, install the package:
+
+.. code-block:: bash
+
+   pip install git+https://github.com/DyHealthNet/moDiNA.git
+
+.. _docker:
+
+With Docker
+~~~~~~~~~~~~~~~
+
+moDiNA is available as Docker image.
+
+Pull the image:
+
+.. code-block:: bash
+
+   docker pull ghrc.io/dyhealthnet/modina:latest
+
+
+Run the image:
+
+.. code-block:: bash
+
+   docker run -it ghrc.io/dyhealthnet/modina:latest
+
+
+.. _source:
+
+From Source
+~~~~~~~~~~~~~~~
+
+To install moDiNA from source, clone the repository and install the package using pip:
+
+.. code-block:: bash
+
+   git clone https://github.com/DyHealthNet/moDiNA.git
+   pip install -e .
 
 
 Data Input

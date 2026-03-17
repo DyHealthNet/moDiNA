@@ -11,8 +11,8 @@ import sys
 sys.path.insert(0, os.path.abspath('../../src'))
 
 project = 'moDiNA'
-copyright = '2025, Andrea Raithel'
-author = 'Andrea Raithel'
+copyright = '2026, DaiSyBio at Technical University of Munich'
+author = 'DaiSyBio at Technical University of Munich'
 release = 'dev'
 
 # -- General configuration ---------------------------------------------------
@@ -42,3 +42,8 @@ html_theme = 'sphinx_rtd_theme'
 #    'titles_only': False
 #}
 html_static_path = ['_static']
+html_logo = '_static/moDiNA_Logo.png'
+html_theme_options = {
+    'logo_only': True,
+}
+html_css_files = ['custom.css']
