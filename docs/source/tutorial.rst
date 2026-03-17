@@ -185,6 +185,7 @@ which efficiently computes pairwise statistical tests and provides enhanced supp
 for missing data. Missing values must be encoded as a common numerical value.
 The resulting effect sizes and p-values quantify the strength of the relationships between variables 
 and are used to construct a context-specific network, where variables are represented as nodes and association scores as weighted edges.
+The table below provides an overview of all implemented statistical tests.
 
 .. list-table::
    :header-rows: 1
@@ -356,10 +357,114 @@ Differential Network Construction
    :width: 800px
    :align: center
 
-   **Figure 1:** Effect size normalization and definition of edge and node metrics. 
+   **Figure 1:** (A) Effect size normalization and (B) definition of differential edge and node metrics. 
    Created with BioRender.com.
 
+Two context-specific networks are aggregated into a differential network using a 
+variety of node- and edge-level metrics provided in the ``compute_diff_network`` function. 
+Since effect sizes obtained from data type-specific 
+statistical tests are located on different scales, rescaling is required to make them 
+comparable across data types. This can be achieved either through Z-score normalization,
+which is used in ``pre`` metrics, or through min–max normalization, which is used in ``post`` metrics.
+
+Parameters:
+
+- ``scores1``, ``scores2``: pandas DataFrames containing the statistical association scores of the two context-specific networks.
+- ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'pre-P'``, ``'post-P'``, ``'pre-E'``, ``'post-E'``, ``'pre-PE'``, ``'post-PE'``, ``'pre-LS'``, ``'post-LS'``,  ``'int-IS'``.
+- ``node_metric``: Node-level metric used to compute the differential network. Options include ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'STC'``.  
+- ``max_path_length``: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to ``2``.
+- ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
+- ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.
+- ``path``: Optional directory where the computed differential scores will be saved.
+- ``format``: Output format used when saving the differential network. Options include ``'csv'`` and ``'graphml'``. Defaults to ``'csv'``.
+- ``meta_file``: pandas DataFrame containing metadata about the variables. Must include the columns ``label`` and ``type``. Required when using the ``STC`` node metric.
+- ``test_type``: Statistical test used for continuous nodes in the ``STC`` metric. Options include ``'parametric'`` and ``'nonparametric'``. Defaults to ``'nonparametric'``.
+
+
+Returns:
+
+A tuple ``(edges_diff, nodes_diff)``:
+
+- ``edges_diff``: pandas DataFrame containing the computed differential edge scores.
+- ``nodes_diff``: pandas DataFrame containing the computed differential node scores.
+
+Example:
+
+.. code-block:: python
+
+    from modina.diff_network import compute_diff_network
+
+    edges_diff, nodes_diff = compute_diff_network(
+        scores1=scores_context1,
+        scores2=scores_context2,
+        context1=data_context1,
+        context2=data_context2,
+        edge_metric='pre-LS',
+        node_metric='STC',
+        test_type='nonparametric',
+        meta_file=meta
+    )
 
 .. _ranking:
 Ranking
 ~~~~~~~
+
+The final step in differential network analysis with **moDiNA** is to rank nodes or edges 
+according to their differential activity using the ``compute_ranking`` function. 
+Several ranking algorithms are available, which differ in the type of evidence they incorporate. 
+In particular, algorithms may use differential edge and/or node scores,  
+and may account for the directionality of differential effects. 
+The table below summarizes the implemented ranking methods and their required inputs.
+
++------------------+-------------------------------+------------------+
+| Ranking Algorithm|             Input             | Output           |
++                  +---------+---------+-----------+                  +
+|                  | Edges   | Nodes   | Direction |                  |
++==================+=========+=========+===========+==================+
+| ``DimontRank``   | ✓       |         | ✓         | node ranking     |
++------------------+---------+---------+-----------+------------------+
+| ``absDimontRank``| ✓       |         |           | node ranking     |
++------------------+---------+---------+-----------+------------------+
+| ``PageRank``     | ✓       |         |           | node ranking     |
++------------------+---------+---------+-----------+------------------+
+| ``PageRank+``    | ✓       | ✓       |           | node ranking     |
++------------------+---------+---------+-----------+------------------+
+| ``direct_node``  |         | ✓       |           | node ranking     |
++------------------+---------+---------+-----------+------------------+
+| ``direct_edge``  | ✓       |         |           | edge ranking     |
++------------------+---------+---------+-----------+------------------+
+
+Parameters:
+
+- ``nodes_diff``: pandas DataFrame containing differential node scores.
+- ``edges_diff``: pandas DataFrame containing differential edge scores.
+- ``ranking_alg``: Ranking algorithm to compute. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'``, ``'direct_node'`` and ``'direct_edge'``.
+- ``meta_file``: Optional pandas DataFrame specifying node metadata (columns ``label`` and ``type``), used to generate type-specific rankings. 
+- ``path``: Optional file path to save the resulting ranking as a CSV file.
+
+Returns:
+
+A tuple ``(ranks, rank_dict)``:
+
+- ``ranks``: List containing the ranked nodes (or edges for ``direct_edge``), sorted in descending order.
+- ``rank_dict``: Dictionary containing rankings per data type:
+
+  - ``'cont'``: Continuous variables  
+  - ``'ord'``: Ordinal variables
+  - ``'nom'``: Nominal variables 
+  - ``'bi'``: Binary variables  
+
+Example:
+
+.. code-block:: python
+
+    from ranking import compute_ranking
+
+    # Personalized PageRank
+    rankings, rank_dict = compute_ranking(
+        nodes_diff=nodes_diff,
+        edges_diff=edges_diff,
+        ranking_alg='PageRank+',
+        meta_file=meta
+    )
