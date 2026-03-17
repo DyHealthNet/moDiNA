@@ -1,6 +1,6 @@
 # moDiNA: Differential Network Analysis of Mixed-Type Multi-Omics Data 
 
-![Pipeline Overview](docs/_static/moDiNA_Introduction.png)
+![Pipeline Overview](docs/source/_static/moDiNA_Introduction.png)
 
 The **moDiNA** pipeline facilitates **m**ulti-**o**mics **D**ifferential **N**etwork **A**nalysis in mixed-type data.
 It compares two biologically distinct contexts and constructs a ranked differential network that captures both differentially abundant variables (nodes) and differential associations (edges).
@@ -12,7 +12,7 @@ Full documentation is available at [https://dyhealthnet.github.io/moDiNA](https:
 
 ## Installation
 
-moDiNA can be installed using Conda, Docker, or from source.  
+**moDiNA** can be installed using Conda, Docker, or from source.  
 If you face any issues, feel free to open a GitHub issue.
 
 **Requirements:** Python 3.11
