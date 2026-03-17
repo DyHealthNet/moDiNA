@@ -1,30 +1,33 @@
-[tool.poetry]
+[project]
 name = "moDiNA"
 version = "0.0.1"
 description = "Multi-Omics Differential Network Analysis"
-authors = ["Andrea Raithel <andrea.raithel@tum.de>"]
+authors = [{name = "Andrea Raithel", email = "andrea.raithel@tum.de"}]
 readme = "README.md"
-license = "MIT"
-homepage = "https://github.com/DyHealthNet/moDiNA.git"
-repository = "https://github.com/DyHealthNet/moDiNA.git"
-documentation = "https://github.com/DyHealthNet/moDiNA/wiki"
+license = {text = "MIT"}
+requires-python = ">=3.11,<3.12"
 keywords = ["multi-omics", "network", "analysis"]
-packages = [
-    { include = "modina", from = "src" }
+packages = [{include = "modina", from = "src"}]
+dependencies = [
+    "numpy >=1.26.4",
+    "pandas >=2.2.3",
+    "scipy >=1.11.0",
+    "networkx >=3.5",
+    "igraph >=1.0.0",
+    "napypi >=1.0.1"
 ]
 
-[tool.poetry.dependencies]
-python = ">=3.11,<3.12"
-numpy = ">=1.26.4"
-pandas = ">=2.2.3"
-scipy = ">=1.11.0"
-networkx = ">=3.5"
-igraph = ">=1.0.0"
-napypi = "^1.0.1"
+[project.urls]
+homepage = "https://github.com/DyHealthNet/moDiNA.git"
+repository = "https://github.com/DyHealthNet/moDiNA.git"
+documentation = "https://dyhealthnet.github.io/moDiNA"
+issues = "https://github.com/DyHealthNet/moDiNA/issues"
 
-[tool.poetry.urls]
-Homepage = "https://github.com/DyHealthNet/moDiNA.git"
-Issues = "https://github.com/DyHealthNet/moDiNA/issues"
+[project.optional-dependencies]
+dev = [
+    "pytest >=7.4",
+    "sphinx >=7.1"
+]
 
 [build-system]
 requires = ["poetry-core>=1.5.0"]
