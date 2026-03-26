@@ -48,7 +48,6 @@ def pre_rescaling(scores1, scores2, metric='rescaled-E'):
 
 
 # Post-rescaling (Min-Max normalization)
-# TODO: instead of taking the whole dataframe, only create a new column maybe
 def post_rescaling(diff_scores, metric):
     diff_scores = diff_scores.copy()
 
