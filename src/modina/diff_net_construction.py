@@ -566,7 +566,7 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     elif node_metric == 'WDC-E':
         nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='WDC-E')
 
-    # PageRank centrality based on abs-E (PRC-E)
+    # PageRank centrality based on absolute values of rescaled-E (PRC-E)
     elif node_metric == 'PRC-E':
         nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='PRC-E')
     

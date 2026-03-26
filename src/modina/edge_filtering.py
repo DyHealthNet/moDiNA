@@ -22,7 +22,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     :param context2: The second context for the differential network analysis.
     :param filter_method: Method used for filtering. Defaults to None.
     :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
-    :param filter_metric: Edge metric used for filtering. Defaults to None.
+    :param filter_metric: Edge metric used for filtering. Options include 'raw-P' and 'rescaled-E'. Defaults to None.
     :param filter_rule: Rule to integrate the networks during filtering. Defaults to None.
     :param path: Optional path to save the filtered scores and context data as CSV files. Defaults to None.
     :return: A tuple containing the filtered scores and context data.
@@ -30,13 +30,6 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
 
     if not scores1['label1'].equals(scores2['label1']) and not scores1['label2'].equals(scores2['label2']):
         raise ValueError('scores1 and scores2 need to have the same structure and order of edges.')
-
-    # Rescaling
-    #TODO: change pre-E and pre-P to E and P (since the metric names should only correspond to differential scores)
-    if not 'pre-E' in scores1.columns or not 'pre-E' in scores2.columns:
-        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-E') 
-    if not 'pre-P' in scores1.columns or not 'pre-P' in scores2.columns:
-        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='pre-P')
 
     # Check input parameters
     if filter_method is None:
@@ -51,8 +44,9 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     if filter_param is None:
         raise ValueError("Please provide a 'filter_param'.")
 
-    # Set sorting order based on filter metric
-    ascending = True if filter_metric == 'pre-P' else False
+    # Rescaling
+    if filter_metric == 'rescaled-E':
+        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='rescaled-E') 
 
     # Compute number of edges according to the specified method
     threshold1 = None
@@ -87,12 +81,18 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         raise ValueError(f"Invalid filtering method '{filter_method}'. Choose from: 'quantile', 'degree' or 'density'")
 
     # Set threshold
-    threshold1 = scores1[filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
-    threshold2 = scores2[filter_metric].sort_values(ascending=ascending).iloc[n_filtered_edges - 1]
-
+    if filter_metric == 'raw-P':
+        threshold1 = scores1[filter_metric].sort_values(ascending=True).iloc[n_filtered_edges - 1]
+        threshold2 = scores2[filter_metric].sort_values(ascending=True).iloc[n_filtered_edges - 1]
+    elif filter_metric == 'rescaled-E':
+        threshold1 = np.abs(scores1[filter_metric]).sort_values(ascending=False).iloc[n_filtered_edges - 1]
+        threshold2 = np.abs(scores2[filter_metric]).sort_values(ascending=False).iloc[n_filtered_edges - 1]
+    else:
+        raise ValueError(f"Invalid filter metric '{filter_metric}'. Choose from: 'raw-P' or 'rescaled-E'.")
+    
     # Apply the filtering threshold to scores and raw data if provided
     if filter_rule == 'union':
-        if ascending is True:
+        if filter_metric == 'raw-P':
             mask = (scores1[filter_metric] <= threshold1) | (
                     scores2[filter_metric] <= threshold2)
         else:
@@ -104,12 +104,12 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         scores2_filtered = scores2[mask].copy()
 
     elif filter_rule == 'zero':
-        if ascending is True:
+        if filter_metric == 'raw-P':
             mask1 = scores1[filter_metric] <= threshold1
             mask2 = scores2[filter_metric] <= threshold2
         else:
-            mask1 = scores1[filter_metric] >= threshold1
-            mask2 = scores2[filter_metric] >= threshold2
+            mask1 = np.abs(scores1[filter_metric]) >= threshold1
+            mask2 = np.abs(scores2[filter_metric]) >= threshold2
 
         # Apply mask
         filtered1 = scores1[mask1].copy()
@@ -124,9 +124,8 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
 
         fill_values = {
             'raw-P': 1.0,
-            'pre-P': 1.0,
             'raw-E': 0.0,
-            'pre-E': 0.0,
+            'rescaled-E': 0.0
         }
 
         for metric, value in fill_values.items():
