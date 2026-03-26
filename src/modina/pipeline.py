@@ -15,7 +15,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None, max_path_length: int=2,
                      test_type: str = 'nonparametric', nan_value: Optional[int] = None,
                      correction: str = 'bh', num_workers: int=1,
-                     project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[list, dict, Optional[pd.DataFrame], Optional[pd.DataFrame], dict]:
+                     project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2'):
     """
     Wrapper function to perform an end-to-end differential network analysis following the moDiNA pipeline.
 

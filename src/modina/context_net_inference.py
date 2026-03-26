@@ -405,10 +405,12 @@ def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value:
         if nan_value is None:
             # Find a value that does not exist in the data use as nan_value for napy
             existing = set(context.stack().values)
+            nan_value = -999
             while True:
-                nan_value = np.random.randint(-10**5, -10**3)
                 if nan_value not in existing:
                     break
+                else:
+                    nan_value -= 1
         
         logging.warning(f'The context data does not contain any missing values. '
                         f'For statistical tests, the randomly generated value {nan_value} will be used as '

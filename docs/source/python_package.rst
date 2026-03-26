@@ -197,7 +197,7 @@ Parameters:
 
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
 - ``meta_file``: pandas DataFrame specifying the variable metadata. Must contain the columns ``label`` and ``type`` describing each variable and its data type.
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'pre-P'``, ``'post-P'``, ``'pre-E'``, ``'post-E'``, ``'pre-PE'``, ``'post-PE'``, ``'pre-LS'``, ``'post-LS'``,  ``'int-IS'``.
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'pre-E'``, ``'post-E'``, ``'pre-PE'``, ``'post-PE'``, ``'pre-LS'``, ``'post-LS'``,  ``'int-IS'``.
 - ``node_metric``: Node-level metric used to compute the differential network. Options include ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'STC'``.  
 - ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'``, ``'direct_node'`` and ``'direct_edge'``. Defaults to ``'PageRank+'``.
 - ``filter_method``: Optional filtering method applied before constructing the differential network. Options include ``'quantile'``, ``'degree'``, ``'density'``. Per default, no filtering is performed.
@@ -460,7 +460,7 @@ Parameters:
 
 - ``scores1``, ``scores2``: pandas DataFrames containing the statistical association scores of the two context-specific networks.
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'pre-P'``, ``'post-P'``, ``'pre-E'``, ``'post-E'``, ``'pre-PE'``, ``'post-PE'``, ``'pre-LS'``, ``'post-LS'``,  ``'int-IS'``.
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'pre-E'``, ``'post-E'``, ``'pre-PE'``, ``'post-PE'``, ``'pre-LS'``, ``'post-LS'``,  ``'int-IS'``.
 - ``node_metric``: Node-level metric used to compute the differential network. Options include ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'STC'``.  
 - ``max_path_length``: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to ``2``.
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.

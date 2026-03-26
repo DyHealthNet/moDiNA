@@ -237,7 +237,7 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
    * - ``diff_net_analysis.edge_metric``
      - ``string``
      - ``'pre-LS'``
-     - Edge-level differential metric. Used when ``run_type = 'single'``. One of: ``pre-P``, ``pre-E``, ``post-E``, ``post-P``, ``int-IS``, ``pre-LS``, ``post-LS``, ``pre-PE``, ``post-PE``, ``None``.
+     - Edge-level differential metric. Used when ``run_type = 'single'``. One of: ``diff-P``, ``pre-E``, ``post-E``, ``int-IS``, ``pre-LS``, ``post-LS``, ``pre-PE``, ``post-PE``, ``None``.
    * - ``diff_net_analysis.ranking_algorithm``
      - ``string``
      - ``'PageRank+'``
