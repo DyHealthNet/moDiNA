@@ -202,7 +202,7 @@ Parameters:
 - ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'``, ``'direct_node'`` and ``'direct_edge'``. Defaults to ``'PageRank+'``.
 - ``filter_method``: Optional filtering method applied before constructing the differential network. Options include ``'quantile'``, ``'degree'``, ``'density'``. Per default, no filtering is performed.
 - ``filter_param``: Parameter controlling the filtering strength.
-- ``filter_metric``: Edge metric used for filtering.
+- ``filter_metric``: Edge metric used for filtering. Options include ``'raw-P'`` and ``'rescaled-E'``.
 - ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'``.
 - ``max_path_length``: Maximum path length considered when computing integrated interaction scores. Defaults to ``2``.
 - ``test_type``: Statistical test used for association score calculation. Options include ``'parametric'`` and ``'nonparametric'``. Defaults to ``'nonparametric'``.
@@ -247,7 +247,7 @@ Example:
         ranking_alg='PageRank+',
         filter_method='quantile',
         filter_param=0.5,
-        filter_metric='pre-P',
+        filter_metric='raw-P',
         filter_rule='zero'
     )
 
@@ -371,16 +371,9 @@ Parameters:
 - ``context1``, ``context2``: pandas DataFrames with the raw context data for Context 1 and Context 2.
 - ``filter_method``: Filtering method to apply. Options include ``'quantile'``, ``'degree'``, or ``'density'``. Defaults to None (no filtering).
 - ``filter_param``: Parameter controlling the strength or threshold of the filtering method.
-- ``filter_metric``: Edge metric used as the basis for filtering. Options include the adjusted p-value (use ``'pre-P'``) or the Z-score-normalized effect size (use ``'pre-E'``).
+- ``filter_metric``: Edge metric used as the basis for filtering. Options include the multiple testing-adjusted p-value (use ``'raw-P'``) or the absolute value of the Z-score-normalized effect size (use ``'rescaled-E'``).
 - ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'`` .
 - ``path``: Optional path to save the filtered scores and context data as CSV files. Defaults to None.
-
-
-.. warning::
-    Currently, it is not recommended to use ``pre-E`` as a filter metric. Ordering and thresholding Z-score-normalized effect sizes
-    can inadvertently remove highly important edges with large negative effect sizes. 
-    This issue will be addressed in an upcoming update. In the meantime, please use ``pre-P`` instead.
-
 
 Returns:
 
@@ -402,8 +395,8 @@ Examples:
         context1=context1,
         context2=context2,
         filter_method='quantile',
-        filter_param=0.05,
-        filter_metric='pre-P',
+        filter_param=0.5,
+        filter_metric='raw-P',
         filter_rule='union'
     )
 
@@ -415,7 +408,7 @@ Examples:
         context2=context2,
         filter_method='degree',
         filter_param=5,
-        filter_metric='pre-P',
+        filter_metric='raw-P',
         filter_rule='zero'
     )
 
@@ -427,7 +420,7 @@ Examples:
         context2=context2,
         filter_method='density',
         filter_param=0.8,
-        filter_metric='pre-E',
+        filter_metric='rescaled-E',
         filter_rule='zero'
     )
 

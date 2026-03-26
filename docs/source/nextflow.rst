@@ -253,7 +253,7 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
    * - ``diff_net_analysis.filter_metric``
      - ``string``
      - ``'pre-P'``
-     - Edge score used as the basis for filtering. One of: ``pre-P``, ``pre-E``. Required when ``filter_method`` is set.
+     - Edge score used as the basis for filtering. One of: ``raw-P``, ``rescaled-E``. Required when ``filter_method`` is set.
    * - ``diff_net_analysis.filter_rule``
      - ``string``
      - ``'zero'``
