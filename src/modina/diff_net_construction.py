@@ -545,9 +545,14 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     :param path: Optional path to save the differential node scores as a CSV file. Defaults to None.
     :return: A DataFrame containing the computed differential node scores.
     """
-
     assert context1.columns.equals(context2.columns), 'Context a and b need to have the same structure.'
 
+    # Keep only the variables that are present in the scores dataframes
+    vars = pd.concat([scores1['label1'], scores1['label2'], scores2['label1'], scores2['label2']]).unique()
+    context1 = context1[context1.columns.intersection(vars)]
+    context2 = context2[context2.columns.intersection(vars)]
+
+    # Prepare nodes_diff DataFrame
     nodes = context1.columns
     nodes_diff = pd.DataFrame(index=nodes)
 

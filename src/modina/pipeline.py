@@ -43,21 +43,15 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     if project_path is not None:
         os.makedirs(project_path, exist_ok=True)
         config_path = os.path.join(project_path, 'config.json')
-        scores1_path = os.path.join(project_path, f'{name1}_scores.csv')
-        scores2_path = os.path.join(project_path, f'{name2}_scores.csv')
         ranking_path = os.path.join(project_path, f'{ranking_alg}.csv')
     else:
-        scores1_path = None
         config_path = None
-        scores2_path = None
         ranking_path = None
 
     # Score calculation
     logging.info('Computing association scores...')
-    scores1 = compute_context_scores(context_data=context1, meta_file=meta_file, test_type=test_type, correction=correction,
-                                               num_workers=num_workers, path=scores1_path, nan_value=nan_value)
-    scores2 = compute_context_scores(context_data=context2, meta_file=meta_file, test_type=test_type, correction=correction,
-                                               num_workers=num_workers, path=scores2_path, nan_value=nan_value)
+    scores1, scores2 = compute_context_scores(context1=context1, context2=context2, meta_file=meta_file, test_type=test_type, correction=correction,
+                                              num_workers=num_workers, path=project_path, name1=name1, name2=name2, nan_value=nan_value)
     logging.info('Done.')
 
     # Filtering

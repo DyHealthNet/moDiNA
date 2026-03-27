@@ -2,6 +2,7 @@
 
 from modina.statistics_utils import _df_to_numpy, _separate_types
 
+import os
 import numpy as np
 import pandas as pd
 import napypi as napy
@@ -11,7 +12,7 @@ from typing import Optional, Tuple
 EXCLUDED_EFFECTS = {'chi2', 'phi', 't', 'F', 'U', 'H'}
 
 
-def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89) -> pd.DataFrame:
+def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89, correction='bh') -> pd.DataFrame:
     cont_data = cont_data.copy()
     if not cont_data.select_dtypes(include=[np.number]).shape[1] == cont_data.shape[1]:
         raise ValueError('Continuous data contains non-numeric columns.')
@@ -44,35 +45,6 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
     scores = _combine_tests(cont_nom_results, cont_ord_results, bi_cont_results, bi_nom_results,
                             cont_cont_results, bi_ord_results, ord_nom_results)
 
-    return scores
-
-
-def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
-                           test_type: str = 'nonparametric',
-                           correction: str = 'bh', num_workers: int = 1,
-                           path: Optional[str] = None, nan_value: Optional[int] = None) -> pd.DataFrame:
-    """
-    Compute association scores for a given context.
-
-    :param context_data: The raw context data (rows: samples, columns: variables).
-    :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
-    :param test_type: Type of tests to use for network inference. Defaults to 'nonparametric'.
-    :param correction: Correction method for multiple testing. Defaults to 'bh'.
-    :param num_workers: Number of workers for parallel processing. Defaults to 1.
-    :param path: Optional path to save the computed scores as a CSV file. Defaults to None.
-    :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
-    :return: A pd.DataFrame containing the computed association scores.
-    """
-    # Check nan values and input format
-    context_data, nan_value = _check_input_data(context=context_data, meta_file=meta_file, nan_value=nan_value)
-
-    # Separate the data into categorical and continuous data
-    ord, nom, cont, bi = _separate_types(context_data, meta_file)
-
-    # Calculate scores
-    scores = calculate_association_scores(ord_data=ord, nom_data=nom, cont_data=cont, bi_data=bi, 
-                                          test_type=test_type, num_workers=num_workers, nan_value=nan_value)
-
     # Take the adjusted p-value and the corresponding effect size
     column_names = scores.iloc[:, 2:].columns
     if correction == 'bh':
@@ -101,13 +73,55 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     scores_final = scores_final.drop_duplicates(subset=['label1', 'label2', 'test_type'], keep='first')
     scores_final = scores_final.sort_values(by=['label1', 'label2', 'test_type']).reset_index(drop=True)
 
-    # Save scores
-    if path is not None:
-        scores_final.to_csv(path, index=False)
-
     return scores_final
 
 
+def compute_context_scores(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame,
+                           test_type: str = 'nonparametric',
+                           correction: str = 'bh', num_workers: int = 1,
+                           path: Optional[str] = None, nan_value: Optional[int] = None,
+                           name1: str = 'context1', name2: str = 'context2') -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Compute association scores for a given context.
+
+    :param context1: The raw data for context 1 (rows: samples, columns: variables).
+    :param context2: The raw data for context 2 (rows: samples, columns: variables).
+    :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
+    :param test_type: Type of tests to use for network inference. Defaults to 'nonparametric'.
+    :param correction: Correction method for multiple testing. Defaults to 'bh'.
+    :param num_workers: Number of workers for parallel processing. Defaults to 1.
+    :param path: Optional path to save the computed scores as a CSV file. Defaults to None.
+    :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
+    :param name1: Name of Context 1. Used for saving files. Defaults to 'context1'.
+    :param name2: Name of Context 2. Used for saving files. Defaults to 'context2'.
+    :return: A pd.DataFrame containing the computed association scores.
+    """
+    # Check nan values and input format
+    context1, context2, nan_value = _check_input_data(context1=context1, context2=context2, meta_file=meta_file, nan_value=nan_value)
+
+    # Separate the data into categorical and continuous data
+    ord1, nom1, cont1, bi1 = _separate_types(context1, meta_file)
+    ord2, nom2, cont2, bi2 = _separate_types(context2, meta_file)
+
+    # Calculate scores
+    scores1 = calculate_association_scores(ord_data=ord1, nom_data=nom1, cont_data=cont1, bi_data=bi1,
+                                          test_type=test_type, num_workers=num_workers, nan_value=nan_value,
+                                          correction=correction)
+    scores2 = calculate_association_scores(ord_data=ord2, nom_data=nom2, cont_data=cont2, bi_data=bi2,
+                                          test_type=test_type, num_workers=num_workers, nan_value=nan_value,
+                                          correction=correction)
+
+    # Save scores
+    if path is not None:
+        file1 = os.path.join(path, f"{name1}_scores.csv")
+        scores1.to_csv(file1, index=False)
+        file2 = os.path.join(path, f"{name2}_scores.csv")
+        scores2.to_csv(file2, index=False)
+
+    return scores1, scores2
+
+
+# TODO: Add edge case handling for categorical variables with only one category
 def napy_bi_nom(nom_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
     # Combine nominal and binary phenotypes for chi-squared test
     discrete_phenotypes = pd.concat([nom_phenotypes, bi_phenotypes], axis=1)
@@ -202,7 +216,7 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
 
     if bi_phenotypes_one.shape[1] > 0:
         logging.warning(
-            f'There were binary variables found with only one category: {bi_cols_one}. '
+            f'There were binary variables found in one of the contexts with only one observed category: {bi_cols_one}. '
             'These will be added as dummy rows with p-value 1.0 and effect size 0.0.')
 
         # For each combination of bi_cols_one and cont_cols, add a row with p-value 1.0 and effect size 0.0
@@ -272,7 +286,7 @@ def napy_bi_ord(ord_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_w
 
     if bi_phenotypes_one.shape[1] > 0:
         logging.warning(
-            f'There were binary variables found with only one category: {bi_cols_one}. '
+            f'There were binary variables found in one of the contexts with only one observed category: {bi_cols_one}. '
             'These will be added as dummy rows with p-value 1.0 and effect size 0.0.')
 
         # For each combination of bi_cols_one and ord_cols, add a row with p-value 1.0 and effect size 0.0
@@ -361,18 +375,25 @@ def napy_ord_cont(cont_phenotypes: pd.DataFrame, ord_phenotypes: pd.DataFrame, n
 
 
 # Check input format of context data
-def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value: Optional[int] = None) -> Tuple[pd.DataFrame, int]:
+def _check_input_data(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, nan_value: Optional[int] = None) -> Tuple[pd.DataFrame, pd.DataFrame,int]:
     """
-    Check if the input data is in the expected format and check for missing values.
+    Check if the input data is in the expected format. Check for missing values and categorical variables that only have one category.
 
-    :param context: The context data to check.
+    :param context1: Data of context 1.
+    :param context2: Data of context 2.
     :param meta_file: Metadata file containing one row per variable in the context data.
     :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present.
     :return: The checked context data.
     """
     # Check if context is a DataFrame
-    if not isinstance(context, pd.DataFrame):
+    if not isinstance(context1, pd.DataFrame):
         raise ValueError('The context data should be provided as a pandas DataFrame.')
+    if not isinstance(context2, pd.DataFrame):
+        raise ValueError('The context data should be provided as a pandas DataFrame.')
+
+    # Check if context 1 and context 2 have the same variables
+    if set(context1.columns) != set(context2.columns):
+        raise ValueError('Context 1 and Context 2 should have the same variables (columns).')
 
     # Check if meta_file is a DataFrame
     if not isinstance(meta_file, pd.DataFrame):
@@ -384,27 +405,27 @@ def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value:
         raise ValueError(f'The meta_file should contain the following columns: {required_columns}.')
 
     # Check if all variables in context are present in meta_file
-    context_vars = set(context.columns)
+    context_vars = set(context1.columns)
     meta_vars = set(meta_file['label'].values)
     if not context_vars.issubset(meta_vars):
         missing_vars = context_vars - meta_vars
         raise ValueError(f'The following variables are missing in the meta_file: {missing_vars}.')
 
     # Search for non-numeric and NaN values
-    if context.apply(lambda col: pd.to_numeric(col, errors="coerce").isna()).values.any() > 0:
+    if context1.apply(lambda col: pd.to_numeric(col, errors="coerce").isna()).values.any() > 0:
         if nan_value is not None:
             logging.warning(f'The context data still contains non-numeric or NaN values. These will be replaced by the specified nan_value {nan_value}.')
 
-            context = context.apply(pd.to_numeric, errors="coerce")
-            context = context.fillna(nan_value)
+            context1 = context1.apply(pd.to_numeric, errors="coerce")
+            context1 = context1.fillna(nan_value)
         
         else:
-            raise ValueError('The context data contains non-numeric or NaN values. Please clean the data and/or specify a nan_value to replace these values.')
+            raise ValueError('Context 1 contains non-numeric or NaN values. Please clean the data and/or specify a nan_value to replace these values.')
     
     else:
         if nan_value is None:
             # Find a value that does not exist in the data use as nan_value for napy
-            existing = set(context.stack().values)
+            existing = set(context1.stack().values)
             nan_value = -999
             while True:
                 if nan_value not in existing:
@@ -412,13 +433,49 @@ def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value:
                 else:
                     nan_value -= 1
         
-        logging.warning(f'The context data does not contain any missing values. '
+        logging.warning(f'Context 1 does not contain any missing values. '
                         f'For statistical tests, the randomly generated value {nan_value} will be used as '
                         f'the NaN replacement, as this value does not occur in the data. '
                         f'If you want to specify a different value, please provide it via the \'nan_value\' argument.'
-)
+)   
+        
+    if context2.apply(lambda col: pd.to_numeric(col, errors="coerce").isna()).values.any() > 0:
+        if nan_value is not None:
+            logging.warning(f'The context data still contains non-numeric or NaN values. These will be replaced by the specified nan_value {nan_value}.')
 
-    return context, nan_value
+            context2 = context2.apply(pd.to_numeric, errors="coerce")
+            context2 = context2.fillna(nan_value)
+        
+        else:
+            raise ValueError('Context 2 contains non-numeric or NaN values. Please clean the data and/or specify a nan_value to replace these values.')
+    
+    else:
+        if nan_value is None:
+            # Find a value that does not exist in the data use as nan_value for napy
+            existing = set(context2.stack().values)
+            nan_value = -999
+            while True:
+                if nan_value not in existing:
+                    break
+                else:
+                    nan_value -= 1
+        
+        logging.warning(f'Context 2 does not contain any missing values. '
+                        f'For statistical tests, the randomly generated value {nan_value} will be used as '
+                        f'the NaN replacement, as this value does not occur in the data. '
+                        f'If you want to specify a different value, please provide it via the \'nan_value\' argument.'
+)   
+    
+    # Check for categorical variables with only one category
+    categorical_vars = meta_file[meta_file['type'].isin(['nominal', 'binary', 'ordinal'])]['label'].values
+    for var in categorical_vars:
+        if pd.concat([context1[var], context2[var]]).nunique() <= 1:
+            logging.warning(f'Categorical variable "{var}" has only one observed category. This variable will be removed from the context data,'
+                            f'as it does not provide meaningful information for differential network analysis.')
+            context1 = context1.drop(columns=var)
+            context2 = context2.drop(columns=var)
+
+    return context1, context2, nan_value
 
 
 def _combine_tests(*result_groups) -> pd.DataFrame:
