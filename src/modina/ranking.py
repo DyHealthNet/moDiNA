@@ -9,13 +9,13 @@ from typing import Tuple, Optional
 
 # Compute ranking
 def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: Optional[pd.DataFrame | pd.Series], ranking_alg: str,
-                    path: Optional[str] = None, meta_file: Optional[pd.DataFrame] = None) -> Tuple[list, dict]:
+                    path: Optional[str] = None, meta_file: Optional[pd.DataFrame] = None) -> pd.DataFrame | pd.Series:
     """
     Compute a ranking based on the specified ranking algorithm.
 
     :param nodes_diff: Differential node scores.
     :param edges_diff: Differential edge scores.
-    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'.
+    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'nodeRank' and 'edgeRank'.
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
     :param path: Optional path to save the ranking as a CSV file.
     :return: A tuple containing the list of ranked nodes and a dictionary with ranked nodes per data type.
@@ -38,7 +38,6 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
         ranking_scores = pagerank(nodes_diff=nodes_diff, edges_diff=edges_diff,
                                   node_metric=node_metric, edge_metric=edge_metric,
                                   personalization=True)
-        ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # PageRank
     elif ranking_alg == 'PageRank':
@@ -47,7 +46,6 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
 
         ranking_scores = pagerank(edges_diff=edges_diff, edge_metric=edge_metric,
                                 personalization=False)
-        ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # DimontRank with absolute difference
     elif ranking_alg == 'absDimontRank':
@@ -55,7 +53,6 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
             raise ValueError("To compute 'absDimontRank', please provide 'edges_diff'.")
 
         ranking_scores = dimontrank(edges_diff=edges_diff, edge_metric=edge_metric, mode='abs')
-        ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # DimontRank with signed difference
     elif ranking_alg == 'DimontRank':
@@ -63,84 +60,64 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
             raise ValueError("To compute 'DimontRank', please provide 'edges_diff'.")
 
         ranking_scores = dimontrank(edges_diff=edges_diff, edge_metric=edge_metric, mode='signed')
-        ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
 
     # Direct ranking based on node metric
-    elif ranking_alg == 'direct_node':
+    elif ranking_alg == 'nodeRank':
         if nodes_diff is None:
-            raise ValueError("To compute 'direct_node', please provide 'nodes_diff'.")
+            raise ValueError("To compute 'nodeRank', please provide 'nodes_diff'.")
 
-        ranking_scores = nodes_diff[node_metric]
-        ranks = pd.Series(ranking_scores).sort_values(ascending=False).index.tolist()
-
-    elif ranking_alg == 'direct_edge':
+    elif ranking_alg == 'edgeRank':
         if edges_diff is None or edge_metric is None:
-            raise ValueError("To compute 'direct_edge', please provide 'edges_diff'.")
-
-        ranking_scores = edges_diff[['label1', 'label2', edge_metric]].copy()
-        ranking_scores = ranking_scores.sort_values(by=edge_metric, ascending=False).reset_index(drop=True)
-        #ranks = ranking_scores[['label1', 'label2']].values.tolist()
-        ranks = (
-            ranking_scores[['label1', 'label2']]
-            .apply(lambda row: '_'.join(sorted(row)), axis=1)
-            .tolist()
-        )
+            raise ValueError("To compute 'edgeRank', please provide 'edges_diff'.")
 
     else:
         raise ValueError(f"Invalid ranking algorithm {ranking_alg}. "
-                         "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' or 'direct_edge'.")
+                         "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'nodeRank' or 'edgeRank'.")
 
-    rank_cont = []
-    rank_nom = []
-    rank_ord = []
-    rank_bi = []
+    # Construct ranking dataframe
+    if ranking_alg == 'edgeRank':
+        assert type(edge_metric) == str, "edge_metric must be a string."
+        assert edges_diff is not None, "edges_diff must be provided for edgeRank."
 
-    if ranking_alg != 'direct_edge':
+        ranking_df = edges_diff[['label1', 'label2', edge_metric]].copy()   
+        ranking_df['edge'] = ranking_df.apply(lambda row: '_'.join(sorted([row['label1'], row['label2']])), axis=1)
+        ranking_df = ranking_df[['edge', edge_metric]].rename(columns={edge_metric: 'score'})
+        ranking_df = ranking_df.sort_values('score', ascending=False).reset_index(drop=True)
+        ranking_df['rank'] = ranking_df['score'].rank(method='min', ascending=False).astype(int)
+        ranking_df = ranking_df[['edge', 'rank', 'score']]
+    
+    elif ranking_alg == 'nodeRank':
+        assert type(node_metric) == str, "node_metric must be a string."
+        assert nodes_diff is not None, "nodes_diff must be provided for nodeRank."
+
+        ranking_df = nodes_diff[[node_metric]].copy()
+        ranking_df = ranking_df.rename(columns={node_metric: 'score'}).reset_index(names='node')
+        ranking_df = ranking_df.sort_values('score', ascending=False).reset_index(drop=True)
+        ranking_df['rank'] = ranking_df['score'].rank(method='min', ascending=False).astype(int)
+        ranking_df = ranking_df[['node', 'rank', 'score']]
+
         if meta_file is None:
-            logging.warning('No meta_file was provided. Rankings per data type cannot be computed.')
-
+            logging.warning('No meta_file was provided to specify node types.')
         else:
             meta_file = meta_file.set_index('label')
-
-            for node in ranks:
-                node_type = meta_file.at[node, 'type']
-
-                if node_type == 'continuous':
-                    rank_cont.append(node)
-                elif node_type == 'ordinal':
-                    rank_ord.append(node)
-                elif node_type == 'nominal':
-                    rank_nom.append(node)
-                elif node_type == 'binary':
-                    rank_bi.append(node)
-                else:
-                    raise ValueError(f"Invalid node type '{node_type}' for node '{node}' in meta_file.")
+            ranking_df['type'] = ranking_df['node'].map(meta_file['type'])
 
     else:
-        logging.info('Ranking per type is not available for direct_edge ranking algorithm.')
+        ranking_df = pd.DataFrame({'node': list(ranking_scores.keys()), 'score': list(ranking_scores.values())})
+        ranking_df = ranking_df.sort_values('score', ascending=False).reset_index(drop=True)
+        ranking_df['rank'] = ranking_df['score'].rank(method='min', ascending=False).astype(int)
+        ranking_df = ranking_df[['node', 'rank', 'score']]
+        
+        if meta_file is None:
+            logging.warning('No meta_file was provided to specify node types.')
+        else:
+            meta_file = meta_file.set_index('label')
+            ranking_df['type'] = ranking_df['node'].map(meta_file['type'])
 
     if path is not None:
-        ranking_df = pd.DataFrame({"node": ranks, "rank": range(1, len(ranks) + 1)})
-        ranking_df = ranking_df.sort_values("node")
         ranking_df.to_csv(path, index=False)
 
-        if ranking_alg != 'direct_edge' and meta_file is not None:
-            rank_cont_df = pd.DataFrame({"node": rank_cont, "rank": range(1, len(rank_cont) + 1)})
-            rank_ord_df = pd.DataFrame({"node": rank_ord, "rank": range(1, len(rank_ord) + 1)})
-            rank_nom_df = pd.DataFrame({"node": rank_nom, "rank": range(1, len(rank_nom) + 1)})
-            rank_bi_df = pd.DataFrame({"node": rank_bi, "rank": range(1, len(rank_bi) + 1)})
-
-            rank_cont_path = os.path.splitext(path)[0] + '_continuous.csv'
-            rank_ord_path = os.path.splitext(path)[0] + '_ordinal.csv'
-            rank_nom_path = os.path.splitext(path)[0] + '_nominal.csv'
-            rank_bi_path = os.path.splitext(path)[0] + '_binary.csv'
-
-            rank_cont_df.to_csv(rank_cont_path, index=False)
-            rank_ord_df.to_csv(rank_ord_path, index=False)
-            rank_nom_df.to_csv(rank_nom_path, index=False)
-            rank_bi_df.to_csv(rank_bi_path, index=False)
-
-    return ranks, {'cont': rank_cont, 'ord': rank_ord, 'nom': rank_nom, 'bi': rank_bi}
+    return ranking_df
 
 
 # PageRank algorithm
