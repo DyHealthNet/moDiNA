@@ -33,7 +33,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param edge_metric: Edge metric used to construct the differential network.
     :param node_metric: Node metric used to construct the differential network.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
-    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'direct_node' and 'direct_edge'. Defaults to 'PageRank+'.
+    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'nodeRank' and 'edgeRank'. Defaults to 'PageRank+'.
     :param name1: Name of Context 1. Used for saving files. Defaults to 'context1'.
     :param name2: Name of Context 2. Used for saving files. Defaults to 'context2'.
     :param project_path: Optional path to save results. Defaults to None.
@@ -86,8 +86,8 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
 
     # Ranking
     logging.info('Computing ranking...')
-    ranking, rankings_per_type = compute_ranking(edges_diff=edges_diff, nodes_diff=nodes_diff, ranking_alg=ranking_alg,
-                                                 path=ranking_path, meta_file=meta_file)
+    ranking = compute_ranking(edges_diff=edges_diff, nodes_diff=nodes_diff, ranking_alg=ranking_alg,
+                              path=ranking_path, meta_file=meta_file)
     logging.info('Done.')
 
     # Create config dict
@@ -112,4 +112,4 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         with open(config_path, 'w') as f:
             json.dump(params, f, indent=4)
 
-    return ranking, rankings_per_type, edges_diff, nodes_diff, params
+    return ranking, edges_diff, nodes_diff, params
