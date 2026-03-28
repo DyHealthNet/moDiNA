@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import napypi as napy
 import logging
+import itertools
 from typing import Optional, Tuple
 
 EXCLUDED_EFFECTS = {'chi2', 'phi', 't', 'F', 'U', 'H'}
@@ -71,7 +72,6 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
                 break
 
     scores_final = scores_final.drop_duplicates(subset=['label1', 'label2', 'test_type'], keep='first')
-    scores_final = scores_final.sort_values(by=['label1', 'label2', 'test_type']).reset_index(drop=True)
 
     return scores_final
 
@@ -103,6 +103,10 @@ def compute_context_scores(context1: pd.DataFrame, context2: pd.DataFrame, meta_
     ord1, nom1, cont1, bi1 = _separate_types(context1, meta_file)
     ord2, nom2, cont2, bi2 = _separate_types(context2, meta_file)
 
+    # Handle categorical variables with only one category by adding dummy rows with p-value 1.0 and effect size 0.0
+    ord1, nom1, bi1, cont1, dummy1 = _create_dummy_associations(ord=ord1, nom=nom1, bi=bi1, cont=cont1, meta_file=meta_file, test_type=test_type)
+    ord2, nom2, bi2, cont2, dummy2 = _create_dummy_associations(ord=ord2, nom=nom2, bi=bi2, cont=cont2, meta_file=meta_file, test_type=test_type)
+
     # Calculate scores
     scores1 = calculate_association_scores(ord_data=ord1, nom_data=nom1, cont_data=cont1, bi_data=bi1,
                                           test_type=test_type, num_workers=num_workers, nan_value=nan_value,
@@ -110,6 +114,20 @@ def compute_context_scores(context1: pd.DataFrame, context2: pd.DataFrame, meta_
     scores2 = calculate_association_scores(ord_data=ord2, nom_data=nom2, cont_data=cont2, bi_data=bi2,
                                           test_type=test_type, num_workers=num_workers, nan_value=nan_value,
                                           correction=correction)
+
+    scores1 = pd.concat([scores1, dummy1], ignore_index=True)
+    scores2 = pd.concat([scores2, dummy2], ignore_index=True)
+
+    # Sort
+    for df in [scores1, scores2]:
+        l1 = df[['label1', 'label2']].min(axis=1)
+        l2 = df[['label1', 'label2']].max(axis=1)
+        df['label1'] = l1
+        df['label2'] = l2
+    
+    scores1 = scores1.sort_values(by=['label1', 'label2', 'test_type']).reset_index(drop=True)
+    scores2 = scores2.sort_values(by=['label1', 'label2', 'test_type']).reset_index(drop=True)
+    assert scores1[['label1', 'label2', 'test_type']].equals(scores2[['label1', 'label2', 'test_type']]), "The scores for the two contexts should have the same variable pairs and test types in the same order."
 
     # Save scores
     if path is not None:
@@ -121,7 +139,6 @@ def compute_context_scores(context1: pd.DataFrame, context2: pd.DataFrame, meta_
     return scores1, scores2
 
 
-# TODO: Add edge case handling for categorical variables with only one category
 def napy_bi_nom(nom_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
     # Combine nominal and binary phenotypes for chi-squared test
     discrete_phenotypes = pd.concat([nom_phenotypes, bi_phenotypes], axis=1)
@@ -210,58 +227,7 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
 
     results = [_napy_formatting(result, [bi_cols, cont_cols], done_test)]
 
-    # Special case: variables with only one category
-    bi_phenotypes_one = bi_phenotypes.loc[:, bi_phenotypes.nunique() <= 1].copy()
-    bi_phenotypes_one, bi_cols_one = _df_to_numpy(bi_phenotypes_one)
-
-    if bi_phenotypes_one.shape[1] > 0:
-        logging.warning(
-            f'There were binary variables found in one of the contexts with only one observed category: {bi_cols_one}. '
-            'These will be added as dummy rows with p-value 1.0 and effect size 0.0.')
-
-        # For each combination of bi_cols_one and cont_cols, add a row with p-value 1.0 and effect size 0.0
-        for i, df in enumerate(results):
-            if df is None:
-                continue
-
-            p_cols = [col for col in df.columns if "_p_" in col]
-            e_cols = [col for col in df.columns if "_e_" in col]
-
-            special_rows = []
-            for bi_var in bi_cols_one:
-                for cont_var in cont_cols:
-                    row = {
-                        'label1': bi_var,
-                        'label2': cont_var
-                    }
-                    for col in p_cols:
-                        row[col] = 1.0
-                    for col in e_cols:
-                        row[col] = 0.0
-                    special_rows.append(row)
-
-            # Add special case rows to results
-            results[i] = pd.concat([df, pd.DataFrame(special_rows)], ignore_index=True)
-
-    # Replace NaNs
-    results_final = []
-    for df in results:
-        if df is None:
-            results_final.append(None)
-            continue
-
-        df = df.copy()
-        p_cols = [col for col in df.columns if "_p_" in col]
-        e_cols = [col for col in df.columns if "_e_" in col]
-
-        if p_cols:
-            df[p_cols] = df[p_cols].fillna(1.0)
-        if e_cols:
-            df[e_cols] = df[e_cols].fillna(0.0)
-
-        results_final.append(df)
-
-    return results_final
+    return results
 
 
 def napy_bi_ord(ord_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
@@ -280,58 +246,7 @@ def napy_bi_ord(ord_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_w
 
     results = [_napy_formatting(result, [bi_cols, ord_cols], done_test)]
 
-    # Special case: variables with only one category
-    bi_phenotypes_one = bi_phenotypes.loc[:, bi_phenotypes.nunique() <= 1].copy()
-    bi_phenotypes_one, bi_cols_one = _df_to_numpy(bi_phenotypes_one)
-
-    if bi_phenotypes_one.shape[1] > 0:
-        logging.warning(
-            f'There were binary variables found in one of the contexts with only one observed category: {bi_cols_one}. '
-            'These will be added as dummy rows with p-value 1.0 and effect size 0.0.')
-
-        # For each combination of bi_cols_one and ord_cols, add a row with p-value 1.0 and effect size 0.0
-        for i, df in enumerate(results):
-            if df is None:
-                continue
-
-            p_cols = [col for col in df.columns if "_p_" in col]
-            e_cols = [col for col in df.columns if "_e_" in col]
-
-            special_rows = []
-            for bi_var in bi_cols_one:
-                for ord_var in ord_cols:
-                    row = {
-                        'label1': bi_var,
-                        'label2': ord_var
-                    }
-                    for col in p_cols:
-                        row[col] = 1.0
-                    for col in e_cols:
-                        row[col] = 0.0
-                    special_rows.append(row)
-
-            # Add special case rows to results
-            results[i] = pd.concat([df, pd.DataFrame(special_rows)], ignore_index=True)
-
-    # Replace NaNs
-    results_final = []
-    for df in results:
-        if df is None:
-            results_final.append(None)
-            continue
-
-        df = df.copy()
-        p_cols = [col for col in df.columns if "_p_" in col]
-        e_cols = [col for col in df.columns if "_e_" in col]
-
-        if p_cols:
-            df[p_cols] = df[p_cols].fillna(1.0)
-        if e_cols:
-            df[e_cols] = df[e_cols].fillna(0.0)
-
-        results_final.append(df)
-
-    return results_final
+    return results
 
 
 def napy_cont_cont(cont_phenotypes: pd.DataFrame, test: str='nonparametric', num_workers=8, nan_value=-89):
@@ -470,7 +385,7 @@ def _check_input_data(context1: pd.DataFrame, context2: pd.DataFrame, meta_file:
     categorical_vars = meta_file[meta_file['type'].isin(['nominal', 'binary', 'ordinal'])]['label'].values
     for var in categorical_vars:
         if pd.concat([context1[var], context2[var]]).nunique() <= 1:
-            logging.warning(f'Categorical variable "{var}" has only one observed category. This variable will be removed from the context data,'
+            logging.warning(f'Categorical variable "{var}" has only one observed category in both contexts. This variable will be removed from the context data,'
                             f'as it does not provide meaningful information for differential network analysis.')
             context1 = context1.drop(columns=var)
             context2 = context2.drop(columns=var)
@@ -500,6 +415,76 @@ def _combine_tests(*result_groups) -> pd.DataFrame:
     out = out.sort_values(by=['label1', 'label2'], kind='mergesort').reset_index(drop=True)
 
     return out
+
+
+def _create_dummy_associations(ord, nom, bi, cont, meta_file, test_type):
+    all_data = pd.concat([ord, nom, bi, cont], axis=1)
+    const_vars = []
+
+    # Find all categorical variables that have only one observed category
+    for df in [ord, nom, bi]:
+        vars = df.columns[df.nunique() <= 1].tolist()
+        const_vars.extend(vars)
+    
+    if const_vars:
+        logging.warning(f'The following categorical variables have only one observed category in one of the contexts: {const_vars}. For these variables, all related association scores in that context will be set to p-value 1.0 and effect size 0.0.')
+
+        ord = ord.drop(columns=const_vars, errors='ignore')
+        nom = nom.drop(columns=const_vars, errors='ignore')
+        bi = bi.drop(columns=const_vars, errors='ignore')
+    
+        other_vars = all_data.columns.difference(const_vars)
+        
+        meta = meta_file.set_index('label')['type'].to_dict()
+
+        if test_type == 'parametric':
+            map = {
+                ('continuous', 'continuous'): 'pearson',
+                ('continuous', 'nominal'): 'anova',
+                ('continuous', 'ordinal'): 'spearman',
+                ('binary', 'continuous'): 'ttest',
+                ('binary', 'binary'): 'chi2',
+                ('binary', 'nominal'): 'chi2',
+                ('binary', 'ordinal'): 'mwu',
+                ('ordinal', 'ordinal'): 'spearman',
+                ('nominal', 'ordinal'): 'kruskal',
+                ('nominal', 'nominal'): 'chi2'
+            }
+        elif test_type == 'nonparametric':
+            map = {
+                ('continuous', 'continuous'): 'spearman',
+                ('continuous', 'nominal'): 'kruskal',
+                ('continuous', 'ordinal'): 'spearman',
+                ('binary', 'continuous'): 'mwu',
+                ('binary', 'binary'): 'chi2',
+                ('binary', 'nominal'): 'chi2',
+                ('binary', 'ordinal'): 'mwu',
+                ('ordinal', 'ordinal'): 'spearman',
+                ('nominal', 'ordinal'): 'kruskal',
+                ('nominal', 'nominal'): 'chi2'
+            }
+        else:
+            raise ValueError(f"Invalid test type '{test_type}'. Specify 'parametric' or 'nonparametric' for association testing.")
+
+        rows = []
+        for var1 in const_vars:
+            for var2 in other_vars:
+                pair = tuple(sorted((meta[var1], meta[var2])))
+                test = map.get(pair)
+                
+                row = {'label1': var1, 'label2': var2, 'raw-P': 1.0, 'raw-E': 0.0, 'test_type': test}
+                rows.append(row)
+
+        for var1, var2 in itertools.combinations(const_vars, 2):
+            pair = tuple(sorted((meta[var1], meta[var2])))
+            test = map.get(pair)
+
+            row = {'label1': var1, 'label2': var2, 'raw-P': 1.0, 'raw-E': 0.0, 'test_type': test}
+            rows.append(row)
+
+        return ord, nom, bi, cont, pd.DataFrame(rows)
+    
+    return ord, nom, bi, cont, pd.DataFrame()
 
 
 def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str, 
