@@ -40,6 +40,14 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     edges_diff = None
     nodes_diff = None
 
+    # Check for variables with only one observed category
+    assert context1.columns.equals(context2.columns), 'Context data should contain the same columns.'
+    vars = context1.columns
+    for var in vars:
+        if pd.concat([context1[var], context2[var]]).nunique() <= 1:
+            logging.warning(f'Variable "{var}" has only one observed category in both contexts. It is recommended to remove this variable in future analyses,'
+                            f'as it does not provide meaningful information for differential network analysis.')
+
     # Rescaling
     if not 'rescaled-E' in scores1.columns or not 'rescaled-E' in scores2.columns:
         scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='rescaled-E') 

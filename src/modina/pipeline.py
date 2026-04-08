@@ -50,8 +50,10 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
 
     # Score calculation
     logging.info('Computing association scores...')
-    scores1, scores2 = compute_context_scores(context1=context1, context2=context2, meta_file=meta_file, test_type=test_type, correction=correction,
-                                              num_workers=num_workers, path=project_path, name1=name1, name2=name2, nan_value=nan_value)
+    scores1 = compute_context_scores(context_data=context1, meta_file=meta_file, test_type=test_type, correction=correction,
+                                     num_workers=num_workers, path=project_path, name=name1, nan_value=nan_value)
+    scores2 = compute_context_scores(context_data=context2, meta_file=meta_file, test_type=test_type, correction=correction,
+                                     num_workers=num_workers, path=project_path, name=name2, nan_value=nan_value)
     logging.info('Done.')
 
     # Filtering
