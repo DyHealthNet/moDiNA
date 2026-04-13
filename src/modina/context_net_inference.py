@@ -190,9 +190,6 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
     if bi_phenotypes.shape[1] < 1 or cont_phenotypes.shape[1] < 1:
         return [None]
 
-    if (bi_phenotypes.nunique() > 2).any():
-        raise ValueError("All binary variables must not have more than two unique values.")
-
     cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
     bi_phenotypes_two, bi_cols = _df_to_numpy(bi_phenotypes)
 
@@ -220,9 +217,6 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
 def napy_bi_ord(ord_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
     if bi_phenotypes.shape[1] < 1 or ord_phenotypes.shape[1] < 1:
         return [None]
-
-    if (bi_phenotypes.nunique() > 2).any():
-        raise ValueError("All binary variables must not have more than two unique values.")
 
     ord_phenotypes, ord_cols = _df_to_numpy(ord_phenotypes)
     bi_phenotypes_two, bi_cols = _df_to_numpy(bi_phenotypes)
@@ -315,11 +309,11 @@ def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value:
             context = context.fillna(nan_value)
         
         else:
-            raise ValueError('Context 1 contains non-numeric or NaN values. Please clean the data and/or specify a nan_value to replace these values.')
+            raise ValueError('The context data contains non-numeric or NaN values. Please clean the data and/or specify a nan_value to replace these values.')
     
     else:
         if nan_value is None:
-            # Find a value that does not exist in the data use as nan_value for napy
+            # Find a value that does not exist in the data to use as nan_value for napy
             existing = set(context.stack().values)
             nan_value = -999
             while True:
@@ -328,11 +322,16 @@ def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value:
                 else:
                     nan_value -= 1
         
-        logging.warning(f'Context 1 does not contain any missing values. '
-                        f'For statistical tests, the randomly generated value {nan_value} will be used as '
-                        f'the NaN replacement, as this value does not occur in the data. '
-                        f'If you want to specify a different value, please provide it via the \'nan_value\' argument.'
-) 
+            logging.info(f'The context data does not contain any missing values. '
+                         f'For statistical tests, {nan_value} will be used as '
+                         f'the NaN replacement, as this value does not occur in the data. '
+                         f'If you want to specify a different value, please provide it via the \'nan_value\' argument.') 
+    
+    # Check if binary varialbes only have two unique values (excluding NaN)
+    bi_phenotypes = context[meta_file[meta_file['type'] == 'binary']['label']]
+    invalid_cols = [col for col in bi_phenotypes.columns if bi_phenotypes[col][bi_phenotypes[col] != nan_value].nunique() > 2]
+    if invalid_cols:
+        raise ValueError(f"These variables are not binary, but were specified as such: {invalid_cols}")  
 
     return context, nan_value
 
