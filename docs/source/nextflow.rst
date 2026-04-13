@@ -66,6 +66,10 @@ General Parameters
      - ``path``
      - ``''``
      - Absolute path to the directory where all pipeline outputs are written.
+    * - ``evaluation``
+     - ``boolean``
+     - ``true``
+     - Boolean specifying whether evaluation plots should be generated.
  
 Environment Parameters
 ~~~~~~~~~~~~~~~
