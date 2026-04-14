@@ -101,7 +101,7 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     ord, nom, cont, bi = _separate_types(context, meta_file)
 
     # Handle categorical variables with only one category by adding dummy rows with p-value 1.0 and effect size 0.0
-    ord, nom, bi, cont, dummy = _create_dummy_associations(ord=ord, nom=nom, bi=bi, cont=cont, meta_file=meta_file, test_type=test_type)
+    ord, nom, bi, cont, dummy = _create_dummy_associations(ord=ord, nom=nom, bi=bi, cont=cont, meta_file=meta_file, test_type=test_type, nan_value=nan_value)
 
     # Calculate scores
     scores = calculate_association_scores(ord_data=ord, nom_data=nom, cont_data=cont, bi_data=bi,
@@ -360,21 +360,23 @@ def _combine_tests(*result_groups) -> pd.DataFrame:
     return out
 
 
-def _create_dummy_associations(ord, nom, bi, cont, meta_file, test_type):
+def _create_dummy_associations(ord, nom, bi, cont, meta_file, test_type, nan_value):
     all_data = pd.concat([ord, nom, bi, cont], axis=1)
     const_vars = []
 
-    # Find all categorical variables that have only one observed category
-    for df in [ord, nom, bi]:
-        vars = df.columns[df.nunique() <= 1].tolist()
-        const_vars.extend(vars)
+    # Find all variables that have only one observed category/value (excluding NaN)
+    for df in [ord, nom, bi, cont]:
+        for col in df.columns:
+            if df[col][df[col] != nan_value].nunique() <= 1:
+                const_vars.append(col)
     
     if const_vars:
-        logging.warning(f'The following categorical variables have only one observed category in one of the contexts: {const_vars}. For these variables, all related association scores in that context will be set to p-value 1.0 and effect size 0.0.')
+        logging.warning(f'The following variables have only one observed value/category or entirely missing values in one of the contexts: {const_vars}. For these variables, all related association scores in that context will be set to p-value 1.0 and effect size 0.0.')
 
         ord = ord.drop(columns=const_vars, errors='ignore')
         nom = nom.drop(columns=const_vars, errors='ignore')
         bi = bi.drop(columns=const_vars, errors='ignore')
+        cont = cont.drop(columns=const_vars, errors='ignore')
     
         other_vars = all_data.columns.difference(const_vars)
         
@@ -410,11 +412,16 @@ def _create_dummy_associations(ord, nom, bi, cont, meta_file, test_type):
             raise ValueError(f"Invalid test type '{test_type}'. Specify 'parametric' or 'nonparametric' for association testing.")
 
         rows = []
+        seen = set()
         for var1 in const_vars:
             for var2 in other_vars:
                 pair = tuple(sorted((meta[var1], meta[var2])))
+
+                if pair in seen:
+                    continue
+                seen.add(pair)
+
                 test = map.get(pair)
-                
                 row = {'label1': var1, 'label2': var2, 'raw-P': 1.0, 'raw-E': 0.0, 'test_type': test}
                 rows.append(row)
 
