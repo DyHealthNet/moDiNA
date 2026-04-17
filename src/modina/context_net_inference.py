@@ -13,7 +13,7 @@ from typing import Optional, Tuple
 EXCLUDED_EFFECTS = {'chi2', 'phi', 't', 'F', 'U', 'H'}
 
 
-def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89, correction='bh') -> pd.DataFrame:
+def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89.0, correction='bh') -> pd.DataFrame:
     cont_data = cont_data.copy()
     if not cont_data.select_dtypes(include=[np.number]).shape[1] == cont_data.shape[1]:
         raise ValueError('Continuous data contains non-numeric columns.')
@@ -79,7 +79,7 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
 def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
                            test_type: str = 'nonparametric',
                            correction: str = 'bh', num_workers: int = 1,
-                           path: Optional[str] = None, nan_value: Optional[int] = None,
+                           path: Optional[str] = None, nan_value: Optional[float] = None,
                            name: str = 'context1') -> pd.DataFrame:
     """
     Compute association scores for a given context.
@@ -126,7 +126,7 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     return scores
 
 
-def napy_bi_nom(nom_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
+def napy_bi_nom(nom_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89.0):
     # Combine nominal and binary phenotypes for chi-squared test
     discrete_phenotypes = pd.concat([nom_phenotypes, bi_phenotypes], axis=1)
     discrete_phenotypes, cols = _df_to_numpy(discrete_phenotypes)
@@ -137,16 +137,16 @@ def napy_bi_nom(nom_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_w
     results = _napy_formatting(output, [cols], 'chi2')
     assert results is not None, "Results should not be None here."
 
-    for col in results.columns:
-        if "_e_" in col:
-            results[col] = results[col].fillna(0.0)
-        elif "_p_" in col:
-            results[col] = results[col].fillna(1.0)
+    #for col in results.columns:
+    #    if "_e_" in col:
+    #        results[col] = results[col].fillna(0.0)
+    #    elif "_p_" in col:
+    #        results[col] = results[col].fillna(1.0)
 
     return [results]
 
 
-def napy_nom_cont(cont_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, test: str='nonparametric', num_workers=8, nan_value=-89):
+def napy_nom_cont(cont_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, test: str='nonparametric', num_workers=8, nan_value=-89.0):
     if nom_phenotypes.shape[1] < 1 or cont_phenotypes.shape[1] < 1:
         return [None]
 
@@ -172,7 +172,7 @@ def napy_nom_cont(cont_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, t
     return [_napy_formatting(result, [nom_cols, cont_cols], done_test)]
 
 
-def napy_ord_nom(ord_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
+def napy_ord_nom(ord_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89.0):
     if nom_phenotypes.shape[1] < 1 or ord_phenotypes.shape[1] < 1:
         return [None]
 
@@ -186,7 +186,7 @@ def napy_ord_nom(ord_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, num
     return [_napy_formatting(result, [nom_cols, ord_cols], done_test)]
 
 
-def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, test: str='nonparametric', num_workers=8, nan_value=-89):
+def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, test: str='nonparametric', num_workers=8, nan_value=-89.0):
     if bi_phenotypes.shape[1] < 1 or cont_phenotypes.shape[1] < 1:
         return [None]
 
@@ -214,7 +214,7 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
     return results
 
 
-def napy_bi_ord(ord_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
+def napy_bi_ord(ord_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89.0):
     if bi_phenotypes.shape[1] < 1 or ord_phenotypes.shape[1] < 1:
         return [None]
 
@@ -230,7 +230,7 @@ def napy_bi_ord(ord_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_w
     return results
 
 
-def napy_cont_cont(cont_phenotypes: pd.DataFrame, test: str='nonparametric', num_workers=8, nan_value=-89):
+def napy_cont_cont(cont_phenotypes: pd.DataFrame, test: str='nonparametric', num_workers=8, nan_value=-89.0):
     if cont_phenotypes.shape[1] < 2:
         return [None]
     
@@ -254,7 +254,7 @@ def napy_cont_cont(cont_phenotypes: pd.DataFrame, test: str='nonparametric', num
     return [_napy_formatting(result, [cont_cols], done_test)]
 
 
-def napy_ord_cont(cont_phenotypes: pd.DataFrame, ord_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89):
+def napy_ord_cont(cont_phenotypes: pd.DataFrame, ord_phenotypes: pd.DataFrame, num_workers=8, nan_value=-89.0):
     if cont_phenotypes.shape[1] < 1 or ord_phenotypes.shape[1] < 1:
         return [None]
     
@@ -271,7 +271,7 @@ def napy_ord_cont(cont_phenotypes: pd.DataFrame, ord_phenotypes: pd.DataFrame, n
 
 
 # Check input format of context data
-def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value: Optional[int] = None) -> Tuple[pd.DataFrame, int]:
+def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value: Optional[float] = None) -> Tuple[pd.DataFrame, float]:
     """
     Check if the input data is in the expected format. Check for missing values and categorical variables that only have one category.
 
@@ -315,12 +315,12 @@ def _check_input_data(context: pd.DataFrame, meta_file: pd.DataFrame, nan_value:
         if nan_value is None:
             # Find a value that does not exist in the data to use as nan_value for napy
             existing = set(context.stack().values)
-            nan_value = -999
+            nan_value = -999.0
             while True:
                 if nan_value not in existing:
                     break
                 else:
-                    nan_value -= 1
+                    nan_value -= 1.0
         
             logging.info(f'The context data does not contain any missing values. '
                          f'For statistical tests, {nan_value} will be used as '
@@ -412,14 +412,9 @@ def _create_dummy_associations(ord, nom, bi, cont, meta_file, test_type, nan_val
             raise ValueError(f"Invalid test type '{test_type}'. Specify 'parametric' or 'nonparametric' for association testing.")
 
         rows = []
-        seen = set()
         for var1 in const_vars:
             for var2 in other_vars:
                 pair = tuple(sorted((meta[var1], meta[var2])))
-
-                if pair in seen:
-                    continue
-                seen.add(pair)
 
                 test = map.get(pair)
                 row = {'label1': var1, 'label2': var2, 'raw-P': 1.0, 'raw-E': 0.0, 'test_type': test}
