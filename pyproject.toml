@@ -14,7 +14,7 @@ dependencies = [
     "scipy >=1.11.0",
     "networkx >=3.5",
     "igraph >=1.0.0",
-    "napypi >=1.0.1"
+    "napypi >=1.0.2"
 ]
 
 [project.urls]
