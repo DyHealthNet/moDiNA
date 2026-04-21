@@ -66,6 +66,10 @@ General Parameters
      - ``path``
      - ``''``
      - Absolute path to the directory where all pipeline outputs are written.
+   * - ``work_dir``
+     - ``path``
+     - ``''``
+     - Absolute path to the work directory of the Nextflow pipeline.
    * - ``evaluation``
      - ``boolean``
      - ``true``
