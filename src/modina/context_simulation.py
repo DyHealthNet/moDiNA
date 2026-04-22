@@ -158,15 +158,20 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         normal_nodes_cat.remove(node)
         shift_nodes.append(node)
 
-    mean_vector = np.zeros(n_vars)
+    mean_vector1 = np.zeros(n_vars)
+    mean_vector2 = np.zeros(n_vars)
     for node in nodes:
         if node in shift_nodes or any(node in pair for pair in shift_corr_nodes):
             sign = random.choice([1, -1])
-            mean_vector[nodes.index(node)] = sign * shift
+            context_idx = random.choice([1, 2])
+            if context_idx == 1:
+                mean_vector1[nodes.index(node)] = sign * shift
+            else:
+                mean_vector2[nodes.index(node)] = sign * shift
 
     # Gaussian copula
-    u1 = _simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr1, mean_vector=np.zeros(n_vars))
-    u2 = _simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr2, mean_vector=mean_vector)
+    u1 = _simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr1, mean_vector=mean_vector1)
+    u2 = _simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr2, mean_vector=mean_vector2)
 
     # Transform to marginal distributions using the inverse CDF
     for i, node in enumerate(nodes):
