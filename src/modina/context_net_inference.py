@@ -118,6 +118,45 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     
     scores = scores.sort_values(by=['label1', 'label2', 'test_type']).reset_index(drop=True)
 
+    # Replace NaN values in p-values with 1.0 and in effect sizes with 0.0; assign correct test type
+    if test_type == 'parametric':
+        map = {
+            ('continuous', 'continuous'): 'pearson',
+            ('continuous', 'nominal'): 'anova',
+            ('continuous', 'ordinal'): 'spearman',
+            ('binary', 'continuous'): 'ttest',
+            ('binary', 'binary'): 'chi2',
+            ('binary', 'nominal'): 'chi2',
+            ('binary', 'ordinal'): 'mwu',
+            ('ordinal', 'ordinal'): 'spearman',
+            ('nominal', 'ordinal'): 'kruskal',
+            ('nominal', 'nominal'): 'chi2'
+        }
+    elif test_type == 'nonparametric':
+        map = {
+            ('continuous', 'continuous'): 'spearman',
+            ('continuous', 'nominal'): 'kruskal',
+            ('continuous', 'ordinal'): 'spearman',
+            ('binary', 'continuous'): 'mwu',
+            ('binary', 'binary'): 'chi2',
+            ('binary', 'nominal'): 'chi2',
+            ('binary', 'ordinal'): 'mwu',
+            ('ordinal', 'ordinal'): 'spearman',
+            ('nominal', 'ordinal'): 'kruskal',
+            ('nominal', 'nominal'): 'chi2'
+        }
+    else:
+        raise ValueError(f"Invalid test type '{test_type}'. Specify 'parametric' or 'nonparametric' for association testing.")
+
+    meta = meta_file.set_index('label')['type'].to_dict()
+    for col in scores.columns:
+        if col == 'raw-E':
+            scores[col] = scores[col].fillna(0.0)
+        elif col == 'raw-P':
+            scores[col] = scores[col].fillna(1.0)
+        elif col == 'test_type':
+            scores[col] = scores[col].fillna(scores.apply(lambda row: map.get(tuple(sorted((meta[row['label1']], meta[row['label2']]))), 'unknown'), axis=1))
+
     # Save scores
     if path is not None:
         file = os.path.join(path, f"{name}_scores.csv")
@@ -136,12 +175,6 @@ def napy_bi_nom(nom_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_w
     output = napy.chi_squared(discrete_phenotypes, axis=1, threads=num_workers, nan_value=nan_value, use_numba=False)
     results = _napy_formatting(output, [cols], 'chi2')
     assert results is not None, "Results should not be None here."
-
-    #for col in results.columns:
-    #    if "_e_" in col:
-    #        results[col] = results[col].fillna(0.0)
-    #    elif "_p_" in col:
-    #        results[col] = results[col].fillna(1.0)
 
     return [results]
 
