@@ -1,4 +1,5 @@
 from modina.statistics_utils import pre_rescaling, post_rescaling, _df_to_numpy, _separate_types
+from modina.context_net_inference import _order_categories
 
 import os
 from typing import Optional, Tuple
@@ -8,6 +9,7 @@ import pandas as pd
 import igraph as ig
 import napypi as napy
 import logging
+
 
 
 # Differential network computation
@@ -263,6 +265,8 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
     if not context1.columns.equals(context2.columns):
         raise ValueError('Context a and b need to have the same structure.')
     
+    print("Computing statistical test centrality (STC) for nodes...", flush=True)
+    
     # Search for non-numeric and NaN values
     if context1.apply(lambda col: pd.to_numeric(col, errors="coerce").isna()).values.any() > 0 or context2.apply(lambda col: pd.to_numeric(col, errors="coerce").isna()).values.any() > 0:
         if nan_value is not None:
@@ -323,9 +327,11 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
     # nominal
     if nom1.shape[1] > 0:
         combined = pd.concat([nom1, nom2], axis=0)
+        combined = _order_categories(combined)
         combined['context'] = [0] * len(nom1) + [1] * len(nom2)
         combined, colnames = _df_to_numpy(combined)
-
+        
+        
         result = napy.chi_squared(combined, axis=1, threads=num_workers, use_numba=False, return_types=[return_p], nan_value=nan_value)[return_p]
         result_df = pd.DataFrame(result, index=colnames, columns=colnames)
         p_nom = result_df['context'].drop('context')
@@ -337,6 +343,7 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
         context_info, _ = _df_to_numpy(context_info)
         combined = pd.concat([ord1, ord2], axis=0)
         combined, colnames = _df_to_numpy(combined)
+        
 
         result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = num_workers, return_types = [return_p], use_numba=False, nan_value=nan_value)[return_p]
         p_ord = dict(zip(colnames, result[0].tolist()))
@@ -344,9 +351,10 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
     # binary
     if bi1.shape[1] > 0:
         combined = pd.concat([bi1, bi2], axis=0)
+        combined = _order_categories(combined)
         combined['context'] = [0] * len(bi1) + [1] * len(bi2)
         combined, colnames = _df_to_numpy(combined)
-
+        
         result = napy.chi_squared(combined, axis=1, threads=num_workers, use_numba=False, return_types=[return_p], nan_value=nan_value)[return_p]
         result_df = pd.DataFrame(result, index=colnames, columns=colnames)
         p_bi = result_df['context'].drop('context')

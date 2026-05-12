@@ -21,6 +21,7 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
     # Remap categories to start at 0 and be consecutive integers
     nom_data = _order_categories(nom_data)
     bi_data = _order_categories(bi_data)
+    ord_data = _order_categories(ord_data)
 
     cont_nom_results = napy_nom_cont(cont_data, nom_data, test=test_type, num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-nominal score calculation.")
