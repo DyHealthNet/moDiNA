@@ -7,6 +7,8 @@ from typing import Tuple, Optional
 import pandas as pd
 import numpy as np
 
+logging.basicConfig(level = logging.INFO)
+
 
 # Edge filtering
 def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
@@ -68,6 +70,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         
         n_filtered_edges = math.ceil(degree * n_nodes / 2)
 
+
     elif filter_method == 'density':
         density = filter_param
 
@@ -80,6 +83,10 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     else:
         raise ValueError(f"Invalid filtering method '{filter_method}'. Choose from: 'quantile', 'degree' or 'density'")
 
+    # Log n_filered_edges
+    logging.info(f"Filtering edges using method '{filter_method}' with parameter {filter_param}.")
+    logging.info(f"Number of edges to retain after filtering: {n_filtered_edges}.")
+    
     # Set threshold
     if filter_metric == 'raw-P':
         threshold1 = scores1[filter_metric].sort_values(ascending=True).iloc[n_filtered_edges - 1]
@@ -89,6 +96,11 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         threshold2 = np.abs(scores2[filter_metric]).sort_values(ascending=False).iloc[n_filtered_edges - 1]
     else:
         raise ValueError(f"Invalid filter metric '{filter_metric}'. Choose from: 'raw-P' or 'rescaled-E'.")
+    
+    
+    # Log thresholds
+    logging.info(f"Filtering threshold for Context 1: {threshold1}.")
+    logging.info(f"Filtering threshold for Context 2: {threshold2}.")
     
     # Apply the filtering threshold to scores and raw data if provided
     if filter_rule == 'union':
