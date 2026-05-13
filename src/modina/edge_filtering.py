@@ -108,8 +108,8 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
             mask = (scores1[filter_metric] <= threshold1) | (
                     scores2[filter_metric] <= threshold2)
         else:
-            mask = (scores1[filter_metric] >= threshold1) | (
-                    scores2[filter_metric] >= threshold2)
+            mask = (np.abs(scores1[filter_metric]) >= threshold1) | (
+                    np.abs(scores2[filter_metric]) >= threshold2)
 
         # Apply mask
         scores1_filtered = scores1[mask].copy()
