@@ -1,4 +1,4 @@
-from modina.statistics_utils import pre_rescaling, post_rescaling, _df_to_numpy, _separate_types
+from modina.statistics_utils import pre_rescaling, post_rescaling, probit_rescaling, pre_new_rescaling, _df_to_numpy, _separate_types
 from modina.context_net_inference import _order_categories
 
 import os
@@ -522,10 +522,94 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
         # Compute differences in edge metrics first
         edges_diff = _subtract_edges(scores1, scores2, values='raw-LS', metric='diff-LS')
         # Min-Max rescaling
-        edges_diff = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
+        edges_diff = post_rescaling(diff_scores=edges_diff, metric= edge_metric)
+
+    # Probit-rescaled effect size (probit-E)
+    elif edge_metric == 'probit-E':
+        if 'probit-E' not in scores1.columns:
+            scores1, scores2 = probit_rescaling(scores1, scores2, metric='probit-E')
+        edges_diff = _subtract_edges(scores1, scores2, values='probit-E', metric=edge_metric)
+
+    # Sum of diff-P and probit-E (probit-PE)
+    elif edge_metric == 'probit-PE':
+        if 'probit-E' not in scores1.columns:
+            scores1, scores2 = probit_rescaling(scores1, scores2, metric='probit-E')
+        edges_diff = _subtract_edges(scores1, scores2, values='probit-E', metric='probit-E')
+        edges_diff2 = _subtract_edges(scores1, scores2, values='raw-P', metric='diff-P')
+        edges_diff[edge_metric] = edges_diff2['diff-P'] + edges_diff['probit-E']
+        edges_diff['probit-PE_signed'] = (scores1['raw-P'] - scores2['raw-P']) + \
+                                         (scores1['probit-E'] - scores2['probit-E'])
+
+    # Log-transformed p-value and probit-rescaled effect size combined score (probit-LS)
+    elif edge_metric == 'probit-LS':
+        if 'probit-E' not in scores1.columns:
+            scores1, scores2 = probit_rescaling(scores1, scores2, metric='probit-E')
+
+        # Replace zero values by small epsilon (same pattern as pre-LS)
+        p_vals_combined = np.concatenate([scores1[scores1['raw-P'] > 0]['raw-P'].to_numpy(),
+                                          scores2[scores2['raw-P'] > 0]['raw-P'].to_numpy()])
+        min_non_zero = p_vals_combined.min()
+        epsilon = min_non_zero / 10.0
+
+        p_vals1 = scores1['raw-P'].to_numpy()
+        p_vals2 = scores2['raw-P'].to_numpy()
+        p_vals1 = np.where(p_vals1 == 0, epsilon, p_vals1)
+        p_vals2 = np.where(p_vals2 == 0, epsilon, p_vals2)
+
+        # - log10(raw-P) * probit-E
+        values1 = - np.log10(p_vals1) * scores1['probit-E']
+        values2 = - np.log10(p_vals2) * scores2['probit-E']
+
+        values1 = np.where(values1 == -0.0, 0.0, values1)
+        values2 = np.where(values2 == -0.0, 0.0, values2)
+
+        scores1['raw-probit-LS'] = values1
+        scores2['raw-probit-LS'] = values2
+
+        edges_diff = _subtract_edges(scores1, scores2, values='raw-probit-LS', metric=edge_metric)
+
+    # Type-aware pre-rescaled effect size (pre-new-E): scale-only for non-negative, Z-score for signed
+    elif edge_metric == 'pre-new-E':
+        if 'rescaled-new-E' not in scores1.columns:
+            scores1, scores2 = pre_new_rescaling(scores1, scores2, metric='rescaled-new-E')
+        edges_diff = _subtract_edges(scores1, scores2, values='rescaled-new-E', metric=edge_metric)
+
+    # Sum of diff-P and pre-new-E (pre-new-PE)
+    elif edge_metric == 'pre-new-PE':
+        if 'rescaled-new-E' not in scores1.columns:
+            scores1, scores2 = pre_new_rescaling(scores1, scores2, metric='rescaled-new-E')
+        edges_diff = _subtract_edges(scores1, scores2, values='rescaled-new-E', metric='pre-new-E')
+        edges_diff2 = _subtract_edges(scores1, scores2, values='raw-P', metric='diff-P')
+        edges_diff[edge_metric] = edges_diff2['diff-P'] + edges_diff['pre-new-E']
+        edges_diff['pre-new-PE_signed'] = (scores1['raw-P'] - scores2['raw-P']) + \
+                                          (scores1['rescaled-new-E'] - scores2['rescaled-new-E'])
+
+    # Log-transformed p-value and type-aware pre-rescaled effect size (pre-new-LS)
+    elif edge_metric == 'pre-new-LS':
+        if 'rescaled-new-E' not in scores1.columns:
+            scores1, scores2 = pre_new_rescaling(scores1, scores2, metric='rescaled-new-E')
+
+        # Replace zero values by small epsilon (same pattern as pre-LS)
+        p_vals_combined = np.concatenate([scores1[scores1['raw-P'] > 0]['raw-P'].to_numpy(),
+                                          scores2[scores2['raw-P'] > 0]['raw-P'].to_numpy()])
+        epsilon = p_vals_combined.min() / 10.0
+
+        p_vals1 = scores1['raw-P'].to_numpy()
+        p_vals2 = scores2['raw-P'].to_numpy()
+        p_vals1 = np.where(p_vals1 == 0, epsilon, p_vals1)
+        p_vals2 = np.where(p_vals2 == 0, epsilon, p_vals2)
+
+        values1 = -np.log10(p_vals1) * scores1['rescaled-new-E']
+        values2 = -np.log10(p_vals2) * scores2['rescaled-new-E']
+        values1 = np.where(values1 == -0.0, 0.0, values1)
+        values2 = np.where(values2 == -0.0, 0.0, values2)
+
+        scores1['raw-new-LS'] = values1
+        scores2['raw-new-LS'] = values2
+        edges_diff = _subtract_edges(scores1, scores2, values='raw-new-LS', metric=edge_metric)
 
     else:
-        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'diff-P', 'pre-E', 'post-E', 'pre-PE', 'post-PE', 'pre-LS', 'post-LS', or 'int-IS'.")
+        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'diff-P', 'pre-E', 'post-E', 'pre-PE', 'post-PE', 'pre-LS', 'post-LS', 'int-IS', 'probit-E', 'probit-LS', 'probit-PE', 'pre-new-E', 'pre-new-LS', or 'pre-new-PE'.")
     
     # Extract only the relevant columns (eliminate intermediary columns used for computation)
     if 'post' in edge_metric:

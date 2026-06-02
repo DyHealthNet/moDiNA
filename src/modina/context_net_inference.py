@@ -46,6 +46,7 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
 
     scores = _combine_tests(cont_nom_results, cont_ord_results, bi_cont_results, bi_nom_results,
                             cont_cont_results, bi_ord_results, ord_nom_results)
+    logging.info("Finished combining scores from different tests.")
 
     # Take the adjusted p-value and the corresponding effect size
     column_names = scores.iloc[:, 2:].columns
@@ -61,19 +62,41 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
     e_columns = [column for column in column_names if '_e_' in column]
 
     scores_final = scores[['label1', 'label2']].copy()
-    for i in scores.index:
-        for p_type in p_columns:
-            if pd.notna(scores.loc[i, p_type]):
-                test = p_type.split('_')[0]
-                e_type = [column for column in e_columns if test in column][0]
 
-                scores_final.loc[i, 'raw-P'] = scores.loc[i, p_type]
-                scores_final.loc[i, 'raw-E'] = scores.loc[i, e_type]
-                scores_final.loc[i, 'test_type'] = test
-                break
+    # Pre-compute per p-column: test name and the matching e-column
+    p_col_to_test = {col: col.split('_')[0] for col in p_columns}
+    p_col_to_e    = {col: next(ec for ec in e_columns if col.split('_')[0] in ec)
+                     for col in p_columns}
+
+    # (n_rows × n_p_cols) matrix; argmax along axis-1 gives the first non-NaN index
+    p_mat     = scores[p_columns].to_numpy(dtype=float)
+    valid     = ~np.isnan(p_mat)
+    first_idx = valid.argmax(axis=1)
+    has_valid = valid.any(axis=1)
+
+    row_range = np.arange(len(scores))
+    raw_p     = np.where(has_valid, p_mat[row_range, first_idx], np.nan)
+
+    p_cols_arr     = np.array(p_columns)
+    selected_p_col = p_cols_arr[first_idx]
+    test_names     = np.where(has_valid,
+                               [p_col_to_test[c] for c in selected_p_col],
+                               None)
+
+    # Extract e-values: one pass per unique e-column (typically 2–4 distinct values)
+    raw_e          = np.full(len(scores), np.nan)
+    selected_e_col = np.array([p_col_to_e[c] for c in selected_p_col])
+    for e_col in np.unique(selected_e_col):
+        mask = (selected_e_col == e_col) & has_valid
+        raw_e[mask] = scores[e_col].to_numpy(dtype=float)[mask]
+
+    scores_final['raw-P']     = raw_p
+    scores_final['raw-E']     = raw_e
+    scores_final['test_type'] = test_names
 
     scores_final = scores_final.drop_duplicates(subset=['label1', 'label2', 'test_type'], keep='first')
-
+    logging.info("Finished selecting raw p-values and effect sizes for each association.")
+    
     return scores_final
 
 
@@ -108,7 +131,6 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     scores = calculate_association_scores(ord_data=ord, nom_data=nom, cont_data=cont, bi_data=bi,
                                           test_type=test_type, num_workers=num_workers, nan_value=nan_value,
                                           correction=correction)
-
     scores = pd.concat([scores, dummy], ignore_index=True)
 
     # Sort
@@ -118,6 +140,8 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     scores['label2'] = l2
     
     scores = scores.sort_values(by=['label1', 'label2', 'test_type']).reset_index(drop=True)
+    
+    logging.info("Finished calculating association scores and sorting.")
 
     # Replace NaN values in p-values with 1.0 and in effect sizes with 0.0; assign correct test type
     if test_type == 'parametric':
@@ -157,7 +181,9 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
             scores[col] = scores[col].fillna(1.0)
         elif col == 'test_type':
             scores[col] = scores[col].fillna(scores.apply(lambda row: map.get(tuple(sorted((meta[row['label1']], meta[row['label2']]))), 'unknown'), axis=1))
-
+    
+    logging.info("Finished handling NaN values and assigning test types.")
+    
     # Save scores
     if path is not None:
         file = os.path.join(path, f"{name}_scores.csv")
