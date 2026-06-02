@@ -323,14 +323,12 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
     else:
         raise ValueError(f"Invalid correction method '{correction}'. Choose from: 'bh' or 'yek'.")
 
-    # TODO: find solution for binary/nominal features that have constant values across contexts as this may lead to errors in napy chi-squared test.
     # nominal
     if nom1.shape[1] > 0:
         combined = pd.concat([nom1, nom2], axis=0)
         combined = _order_categories(combined)
         combined['context'] = [0] * len(nom1) + [1] * len(nom2)
         combined, colnames = _df_to_numpy(combined)
-        
         
         result = napy.chi_squared(combined, axis=1, threads=num_workers, use_numba=False, return_types=[return_p], nan_value=nan_value)[return_p]
         result_df = pd.DataFrame(result, index=colnames, columns=colnames)
@@ -344,7 +342,6 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
         combined = pd.concat([ord1, ord2], axis=0)
         combined, colnames = _df_to_numpy(combined)
         
-
         result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = num_workers, return_types = [return_p], use_numba=False, nan_value=nan_value)[return_p]
         p_ord = dict(zip(colnames, result[0].tolist()))
 
@@ -664,7 +661,7 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     if node_metric == 'STC':
         if meta_file is None:
             raise ValueError("To compute the 'STC' node metric, please provide a 'meta_file' containing the node types.")
-        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, meta_file=meta_file, test_type=test_type, nan_value=nan_value)
+        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, meta_file=meta_file, test_type=test_type, nan_value=nan_value, num_workers=num_workers)
 
     # Degree centrality based on raw-P (DC-P)
     elif node_metric == 'DC-P':

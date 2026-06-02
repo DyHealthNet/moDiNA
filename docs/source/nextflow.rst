@@ -253,11 +253,11 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
    * - ``diff_net_analysis.filter_method``
      - ``string``
      - ``''``
-     - Optional method to filter context-specific networks before differential analysis. One of: ``degree``, ``density``, ``quantile``. Leave empty to skip filtering.
+     - Optional method to filter context-specific networks before differential analysis. One of: ``degree``, ``density``. Leave empty to skip filtering.
    * - ``diff_net_analysis.filter_param``
      - ``integer / float``
      - ``2``
-     - Parameter for the chosen filter method. Integer for ``degree``; float in (0, 1) for ``density`` and ``quantile``.
+     - Parameter for the chosen filter method. Integer for ``degree``; float in (0, 1) for ``density``.
    * - ``diff_net_analysis.filter_metric``
      - ``string``
      - ``'pre-P'``

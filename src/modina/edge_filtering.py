@@ -56,13 +56,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     n_nodes = context1.shape[1]
     n_edges_before = scores1.shape[0]
 
-    if filter_method == 'quantile':
-        if filter_param <= 0.0 or filter_param > 1.0:
-            raise ValueError("For 'quantile' filtering, 'filter_param' must be between 0 and 1.")
-        
-        n_filtered_edges = math.ceil(filter_param * n_edges_before)
-
-    elif filter_method == 'degree':
+    if filter_method == 'degree':
         degree = filter_param
 
         if degree < 1 or degree >= n_nodes:
@@ -81,7 +75,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         n_filtered_edges = math.ceil(density * possible_edges)
 
     else:
-        raise ValueError(f"Invalid filtering method '{filter_method}'. Choose from: 'quantile', 'degree' or 'density'")
+        raise ValueError(f"Invalid filtering method '{filter_method}'. Choose from: 'degree' or 'density'")
 
     # Log n_filered_edges
     logging.info(f"Filtering edges using method '{filter_method}' with parameter {filter_param}.")

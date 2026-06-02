@@ -200,7 +200,7 @@ Parameters:
 - ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'pre-E'``, ``'post-E'``, ``'pre-PE'``, ``'post-PE'``, ``'pre-LS'``, ``'post-LS'``,  ``'int-IS'``.
 - ``node_metric``: Node-level metric used to compute the differential network. Options include ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'STC'``.  
 - ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'``, ``'direct_node'`` and ``'direct_edge'``. Defaults to ``'PageRank+'``.
-- ``filter_method``: Optional filtering method applied before constructing the differential network. Options include ``'quantile'``, ``'degree'``, ``'density'``. Per default, no filtering is performed.
+- ``filter_method``: Optional filtering method applied before constructing the differential network. Options include ``'degree'``, ``'density'``. Per default, no filtering is performed.
 - ``filter_param``: Parameter controlling the filtering strength.
 - ``filter_metric``: Edge metric used for filtering. Options include ``'raw-P'`` and ``'rescaled-E'``.
 - ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'``.
@@ -245,7 +245,7 @@ Example:
         edge_metric='pre-LS',
         node_metric='STC',
         ranking_alg='PageRank+',
-        filter_method='quantile',
+        filter_method='density',
         filter_param=0.5,
         filter_metric='raw-P',
         filter_rule='zero'
@@ -355,8 +355,8 @@ To reduce network complexity, insignificant edges with large p-values or small e
 
 Three different filtering methods are available, all following the same basic principle: edges are first ordered
 according to their association scores and then thresholded to achieve a desired network characteristic.
-The ``quantile`` method retains only the strongest fraction of edges, the ``degree`` method reduces the network to a specified
-average node degree, and the ``density`` method enforces a predefined network density by keeping only a certain percentage
+The ``degree`` method reduces the network to a specified
+average node degree, while the ``density`` method enforces a predefined network density by keeping only a certain percentage
 of all possible edges. 
 
 After filtering, there are two alternative rules for integrating the two networks.
@@ -369,7 +369,7 @@ Parameters:
 
 - ``scores1``, ``scores2``: pandas DataFrames containing the statistical association scores for Context 1 and Context 2.
 - ``context1``, ``context2``: pandas DataFrames with the raw context data for Context 1 and Context 2.
-- ``filter_method``: Filtering method to apply. Options include ``'quantile'``, ``'degree'``, or ``'density'``. Defaults to None (no filtering).
+- ``filter_method``: Filtering method to apply. Options include ``'degree'`` or ``'density'``. Defaults to None (no filtering).
 - ``filter_param``: Parameter controlling the strength or threshold of the filtering method.
 - ``filter_metric``: Edge metric used as the basis for filtering. Options include the multiple testing-adjusted p-value (use ``'raw-P'``) or the absolute value of the Z-score-normalized effect size (use ``'rescaled-E'``).
 - ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'`` .
@@ -387,18 +387,6 @@ Examples:
 .. code-block:: python
 
     from modina.edge_filtering import filter
-
-    # Quantile filtering
-    scores1_filtered, scores2_filtered, context1_filtered, context2_filtered = filter(
-        scores1=scores1,
-        scores2=scores2,
-        context1=context1,
-        context2=context2,
-        filter_method='quantile',
-        filter_param=0.5,
-        filter_metric='raw-P',
-        filter_rule='union'
-    )
 
     # Degree filtering
     scores1_filtered, scores2_filtered, context1_filtered, context2_filtered = filter(
