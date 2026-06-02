@@ -1,4 +1,4 @@
-from modina.statistics_utils import pre_rescaling, post_rescaling, probit_rescaling, pre_new_rescaling, _df_to_numpy, _separate_types
+from modina.statistics_utils import std_rescaling, probit_rescaling, _df_to_numpy, _separate_types
 from modina.context_net_inference import _order_categories
 
 import os
@@ -50,10 +50,6 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
             logging.warning(f'Variable "{var}" has only one observed category in both contexts. It is recommended to remove this variable in future analyses,'
                             f'as it does not provide meaningful information for differential network analysis.')
 
-    # Rescaling
-    if not 'rescaled-E' in scores1.columns or not 'rescaled-E' in scores2.columns:
-        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='rescaled-E') 
-
     # Edges
     if edge_metric is not None:
         edges_diff = compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, max_path_length=max_path_length)
@@ -91,7 +87,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
 
 
 # Adjusted DrDimont implementation to compute integrated interaction scores
-def interaction_score(data, max_path_length=3, metric='rescaled-E'):
+def interaction_score(data, max_path_length=3, metric='std-E'):
     if max_path_length >= 5:
         raise ValueError('The maximum path length considered in interaction scores has to be smaller than 5.')
     data_extended = data.copy()
@@ -146,15 +142,19 @@ def degree_centrality(nodes_diff, scores1, scores2, metric='DC-P'):
             scores1['inverted-P'] = 1 - scores1['raw-P']
             scores2['inverted-P'] = 1 - scores2['raw-P']
             met = 'inverted-P'
-        elif metric == 'WDC-E':
-            met = 'rescaled-E'
+        elif metric == 'WDC-E-std':
+            met = 'std-E'
+        elif metric == 'WDC-E-probit':
+            met = 'probit-E'
         else:
             raise ValueError(f"Invalid metric '{metric}' for weighted degree centrality.")
     else:
         if metric == 'DC-P':
             met = 'raw-P'
-        elif metric == 'DC-E':
-            met = 'raw-E'
+        elif metric == 'DC-E-std':
+            met = 'std-E'
+        elif metric == 'DC-E-probit':
+            met = 'probit-E'
         else:
             raise ValueError(f"Invalid metric '{metric}' for degree centrality.")
 
@@ -168,17 +168,17 @@ def degree_centrality(nodes_diff, scores1, scores2, metric='DC-P'):
 
     # TODO: optimize implementation according to DimontRank implementation using defaultdict
     if 'W' in metric:
-        # Sum up all weights of incident edges
+        # Sum up absolute weights of incident edges (abs handles signed metrics like std-E/probit-E)
         for node in nodes:
             sum1 = 0
             sum2 = 0
             for i in scores1.index:
                 if (scores1.loc[i, 'label1'] == node) or (scores1.loc[i, 'label2'] == node):
-                    sum1 += scores1.loc[i, met]
+                    sum1 += abs(scores1.loc[i, met])
 
             for i in scores2.index:
                 if (scores2.loc[i, 'label1'] == node) or (scores2.loc[i, 'label2'] == node):
-                    sum2 += scores2.loc[i, met]
+                    sum2 += abs(scores2.loc[i, met])
 
             degree_centrality.loc[node, 'context_a'] = sum1
             degree_centrality.loc[node, 'context_b'] = sum2
@@ -193,7 +193,7 @@ def degree_centrality(nodes_diff, scores1, scores2, metric='DC-P'):
                     if met == 'raw-P':
                         if scores1.loc[i, met] != 1:
                             count1 += 1
-                    elif met == 'raw-E':
+                    elif met in ('std-E', 'probit-E'):
                         if scores1.loc[i, met] != 0:
                             count1 += 1
                     else:
@@ -204,7 +204,7 @@ def degree_centrality(nodes_diff, scores1, scores2, metric='DC-P'):
                     if met == 'raw-P':
                         if scores2.loc[i, met] != 1:
                             count2 += 1
-                    elif met == 'raw-E':
+                    elif met in ('std-E', 'probit-E'):
                         if scores2.loc[i, met] != 0:
                             count2 += 1
                     else:
@@ -237,9 +237,12 @@ def pagerank_centrality(nodes_diff, scores1, scores2, metric='PRC-P'):
     if metric == 'PRC-P':
         scores1['weight'] = 1 - scores1['raw-P']
         scores2['weight'] = 1 - scores2['raw-P']
-    elif metric == 'PRC-E':
-        scores1['weight'] = np.abs(scores1['rescaled-E'])
-        scores2['weight'] = np.abs(scores2['rescaled-E'])
+    elif metric == 'PRC-E-std':
+        scores1['weight'] = np.abs(scores1['std-E'])
+        scores2['weight'] = np.abs(scores2['std-E'])
+    elif metric == 'PRC-E-probit':
+        scores1['weight'] = np.abs(scores1['probit-E'])
+        scores2['weight'] = np.abs(scores2['probit-E'])
     else:
         raise ValueError(f"Invalid metric '{metric}' for PageRank centrality.")
 
@@ -414,112 +417,28 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
     :param path: Optional path to save the differential edge scores as a CSV file. Defaults to None.
     :return: A DataFrame containing the computed differential edge scores.
     """
-    
-    edges_diff = None
 
-    # Rescaling
-    if not 'rescaled-E' in scores1.columns or not 'rescaled-E' in scores2.columns:
-        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='rescaled-E') 
+    edges_diff = None
 
     # Multiple-testing adjusted p-value (diff-P)
     if edge_metric == 'diff-P':
         edges_diff = _subtract_edges(scores1, scores2, values='raw-P', metric=edge_metric)
-    
-    # Pre-rescaled effect size (pre-E)
-    elif edge_metric == 'pre-E':
-        edges_diff = _subtract_edges(scores1, scores2, values='rescaled-E', metric=edge_metric)
 
-    # Post-rescaled effect size (post-E)
-    elif edge_metric == 'post-E':
-        # Compute differences in edge metrics first
-        edges_diff = _subtract_edges(scores1, scores2, values='raw-E', metric='diff-E')
-        # Min-Max rescaling
-        edges_diff = post_rescaling(diff_scores=edges_diff, metric=edge_metric)
-
-    # Sum of diff-P and pre-E (pre-PE)
-    elif edge_metric == 'pre-PE':
-        # Compute 'pre-E'
-        edges_diff = _subtract_edges(scores1, scores2, values='rescaled-E', metric='pre-E')
-        # Compute 'diff-P'
-        edges_diff2 = _subtract_edges(scores1, scores2, values='raw-P', metric='diff-P')
-        # Sum the two scores
-        edges_diff[edge_metric] = edges_diff2['diff-P'] + edges_diff['pre-E']
-
-        # Compute the signed version
-        edges_diff['pre-PE_signed'] = (scores1['raw-P'] - scores2['raw-P']) + (scores1['rescaled-E'] - scores2['rescaled-E'])
-
-    # Sum of diff-P and post-E (post-PE)
-    elif edge_metric == 'post-PE':
-        # Compute 'post-E'
-        edges_diff = _subtract_edges(scores1, scores2, values='raw-E', metric='diff-E')
-        edges_diff = post_rescaling(diff_scores=edges_diff, metric='post-E')
-        # Compute 'diff-P'
-        edges_diff2 = _subtract_edges(scores1, scores2, values='raw-P', metric='diff-P')
-        # Sum the two scores
-        edges_diff[edge_metric] = edges_diff2['diff-P'] + edges_diff['post-E']
-
-    # Integrated Interaction Score (int-IS)
-    elif edge_metric == 'int-IS':
-        # Compute interaction score using DrDimont method
-        scores1 = interaction_score(scores1, metric='rescaled-E', max_path_length=max_path_length)
-        scores2 = interaction_score(scores2, metric='rescaled-E', max_path_length=max_path_length)
-
+    # Std-rescaled interaction score (std-int-IS)
+    elif edge_metric == 'std-int-IS':
+        if 'std-E' not in scores1.columns:
+            scores1, scores2 = std_rescaling(scores1, scores2, metric='std-E')
+        scores1 = interaction_score(scores1, metric='std-E', max_path_length=max_path_length)
+        scores2 = interaction_score(scores2, metric='std-E', max_path_length=max_path_length)
         edges_diff = _subtract_edges(scores1, scores2, values='raw-IS', metric=edge_metric)
 
-    # Log-transformed p-value and pre-rescaled effect size combined score (pre-LS)
-    elif edge_metric == 'pre-LS':
-        # Replace zero values by small epsilon (1/10 of the minimum non-zero value)
-        p_vals_combined = np.concatenate([scores1[scores1['raw-P'] > 0]['raw-P'].to_numpy(), 
-                                            scores2[scores2['raw-P'] > 0]['raw-P'].to_numpy()])
-        min_non_zero = p_vals_combined.min()
-        epsilon = min_non_zero / 10.0
-
-        p_vals1 = scores1['raw-P'].to_numpy()
-        p_vals2 = scores2['raw-P'].to_numpy()
-        p_vals1 = np.where(p_vals1 == 0, epsilon, p_vals1)
-        p_vals2 = np.where(p_vals2 == 0, epsilon, p_vals2)
-
-        # - log10(raw-P) * rescaled-E
-        values1 = - np.log10(p_vals1) * scores1['rescaled-E']
-        values2 = - np.log10(p_vals2) * scores2['rescaled-E']
-
-        # Replace -0.0 with +0.0
-        values1 = np.where(values1 == -0.0, 0.0, values1)
-        values2 = np.where(values2 == -0.0, 0.0, values2)
-
-        scores1['raw-LS'] = values1
-        scores2['raw-LS'] = values2
-
-        edges_diff = _subtract_edges(scores1, scores2, values='raw-LS', metric=edge_metric)
-
-    # Post rescaled absolute difference in (log-transformed raw p-value multiplied by raw effect size) (post-LS)
-    elif edge_metric == 'post-LS':
-        # Replace zero values by small epsilon (1/10 of the minimum non-zero value)
-        p_vals_combined = np.concatenate([scores1[scores1['raw-P'] > 0]['raw-P'].to_numpy(), 
-                                            scores2[scores2['raw-P'] > 0]['raw-P'].to_numpy()])
-        min_non_zero = p_vals_combined.min()
-        epsilon = min_non_zero / 10.0
-
-        p_vals1 = scores1['raw-P'].to_numpy()
-        p_vals2 = scores2['raw-P'].to_numpy()
-        p_vals1 = np.where(p_vals1 == 0, epsilon, p_vals1)
-        p_vals2 = np.where(p_vals2 == 0, epsilon, p_vals2)
-
-        # - log10(raw-P) * raw-E
-        values1 = - np.log10(p_vals1) * scores1['raw-E']
-        values2 = - np.log10(p_vals2) * scores2['raw-E']
-
-        # Replace -0.0 with +0.0
-        values1 = np.where(values1 == -0.0, 0.0, values1)
-        values2 = np.where(values2 == -0.0, 0.0, values2)
-
-        scores1['raw-LS'] = values1
-        scores2['raw-LS'] = values2
-
-        # Compute differences in edge metrics first
-        edges_diff = _subtract_edges(scores1, scores2, values='raw-LS', metric='diff-LS')
-        # Min-Max rescaling
-        edges_diff = post_rescaling(diff_scores=edges_diff, metric= edge_metric)
+    # Probit-rescaled interaction score (probit-int-IS)
+    elif edge_metric == 'probit-int-IS':
+        if 'probit-E' not in scores1.columns:
+            scores1, scores2 = probit_rescaling(scores1, scores2, metric='probit-E')
+        scores1 = interaction_score(scores1, metric='probit-E', max_path_length=max_path_length)
+        scores2 = interaction_score(scores2, metric='probit-E', max_path_length=max_path_length)
+        edges_diff = _subtract_edges(scores1, scores2, values='raw-IS', metric=edge_metric)
 
     # Probit-rescaled effect size (probit-E)
     elif edge_metric == 'probit-E':
@@ -542,7 +461,7 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
         if 'probit-E' not in scores1.columns:
             scores1, scores2 = probit_rescaling(scores1, scores2, metric='probit-E')
 
-        # Replace zero values by small epsilon (same pattern as pre-LS)
+        # Replace zero values by small epsilon
         p_vals_combined = np.concatenate([scores1[scores1['raw-P'] > 0]['raw-P'].to_numpy(),
                                           scores2[scores2['raw-P'] > 0]['raw-P'].to_numpy()])
         min_non_zero = p_vals_combined.min()
@@ -565,28 +484,27 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
 
         edges_diff = _subtract_edges(scores1, scores2, values='raw-probit-LS', metric=edge_metric)
 
-    # Type-aware pre-rescaled effect size (pre-new-E): scale-only for non-negative, Z-score for signed
-    elif edge_metric == 'pre-new-E':
-        if 'rescaled-new-E' not in scores1.columns:
-            scores1, scores2 = pre_new_rescaling(scores1, scores2, metric='rescaled-new-E')
-        edges_diff = _subtract_edges(scores1, scores2, values='rescaled-new-E', metric=edge_metric)
+    # Std-rescaled effect size (std-E)
+    elif edge_metric == 'std-E':
+        if 'std-E' not in scores1.columns:
+            scores1, scores2 = std_rescaling(scores1, scores2, metric='std-E')
+        edges_diff = _subtract_edges(scores1, scores2, values='std-E', metric=edge_metric)
 
-    # Sum of diff-P and pre-new-E (pre-new-PE)
-    elif edge_metric == 'pre-new-PE':
-        if 'rescaled-new-E' not in scores1.columns:
-            scores1, scores2 = pre_new_rescaling(scores1, scores2, metric='rescaled-new-E')
-        edges_diff = _subtract_edges(scores1, scores2, values='rescaled-new-E', metric='pre-new-E')
+    # Sum of diff-P and std-E (std-PE)
+    elif edge_metric == 'std-PE':
+        if 'std-E' not in scores1.columns:
+            scores1, scores2 = std_rescaling(scores1, scores2, metric='std-E')
+        edges_diff = _subtract_edges(scores1, scores2, values='std-E', metric='std-E')
         edges_diff2 = _subtract_edges(scores1, scores2, values='raw-P', metric='diff-P')
-        edges_diff[edge_metric] = edges_diff2['diff-P'] + edges_diff['pre-new-E']
-        edges_diff['pre-new-PE_signed'] = (scores1['raw-P'] - scores2['raw-P']) + \
-                                          (scores1['rescaled-new-E'] - scores2['rescaled-new-E'])
+        edges_diff[edge_metric] = edges_diff2['diff-P'] + edges_diff['std-E']
+        edges_diff['std-PE_signed'] = (scores1['raw-P'] - scores2['raw-P']) + \
+                                      (scores1['std-E'] - scores2['std-E'])
 
-    # Log-transformed p-value and type-aware pre-rescaled effect size (pre-new-LS)
-    elif edge_metric == 'pre-new-LS':
-        if 'rescaled-new-E' not in scores1.columns:
-            scores1, scores2 = pre_new_rescaling(scores1, scores2, metric='rescaled-new-E')
+    # Log-transformed p-value and std-rescaled effect size (std-LS)
+    elif edge_metric == 'std-LS':
+        if 'std-E' not in scores1.columns:
+            scores1, scores2 = std_rescaling(scores1, scores2, metric='std-E')
 
-        # Replace zero values by small epsilon (same pattern as pre-LS)
         p_vals_combined = np.concatenate([scores1[scores1['raw-P'] > 0]['raw-P'].to_numpy(),
                                           scores2[scores2['raw-P'] > 0]['raw-P'].to_numpy()])
         epsilon = p_vals_combined.min() / 10.0
@@ -596,24 +514,21 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
         p_vals1 = np.where(p_vals1 == 0, epsilon, p_vals1)
         p_vals2 = np.where(p_vals2 == 0, epsilon, p_vals2)
 
-        values1 = -np.log10(p_vals1) * scores1['rescaled-new-E']
-        values2 = -np.log10(p_vals2) * scores2['rescaled-new-E']
+        values1 = -np.log10(p_vals1) * scores1['std-E']
+        values2 = -np.log10(p_vals2) * scores2['std-E']
         values1 = np.where(values1 == -0.0, 0.0, values1)
         values2 = np.where(values2 == -0.0, 0.0, values2)
 
-        scores1['raw-new-LS'] = values1
-        scores2['raw-new-LS'] = values2
-        edges_diff = _subtract_edges(scores1, scores2, values='raw-new-LS', metric=edge_metric)
+        scores1['raw-std-LS'] = values1
+        scores2['raw-std-LS'] = values2
+        edges_diff = _subtract_edges(scores1, scores2, values='raw-std-LS', metric=edge_metric)
 
     else:
-        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'diff-P', 'pre-E', 'post-E', 'pre-PE', 'post-PE', 'pre-LS', 'post-LS', 'int-IS', 'probit-E', 'probit-LS', 'probit-PE', 'pre-new-E', 'pre-new-LS', or 'pre-new-PE'.")
-    
+        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'diff-P', 'std-int-IS', 'probit-int-IS', 'probit-E', 'probit-PE', 'probit-LS', 'std-E', 'std-PE', or 'std-LS'.")
+
     # Extract only the relevant columns (eliminate intermediary columns used for computation)
-    if 'post' in edge_metric:
-        edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric]]
-    else:
-        edge_metric_signed = edge_metric + '_signed'
-        edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric, edge_metric_signed]]
+    edge_metric_signed = edge_metric + '_signed'
+    edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric, edge_metric_signed]]
 
     if path is not None:
         edges_diff.to_csv(path)
@@ -653,10 +568,6 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     nodes = context1.columns
     nodes_diff = pd.DataFrame(index=nodes)
 
-    # Rescaling
-    if not 'rescaled-E' in scores1.columns or not 'rescaled-E' in scores2.columns:
-        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='rescaled-E') 
-
     # Statistical test centrality (STC)
     if node_metric == 'STC':
         if meta_file is None:
@@ -667,28 +578,52 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     elif node_metric == 'DC-P':
         nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='DC-P')
 
-    # Degree centrality based on raw-E (DC-E)
-    elif node_metric == 'DC-E':
-        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='DC-E')
+    # Degree centrality based on std-E (DC-E-std)
+    elif node_metric == 'DC-E-std':
+        if 'std-E' not in scores1.columns:
+            scores1, scores2 = std_rescaling(scores1, scores2, metric='std-E')
+        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='DC-E-std')
+
+    # Degree centrality based on probit-E (DC-E-probit)
+    elif node_metric == 'DC-E-probit':
+        if 'probit-E' not in scores1.columns:
+            scores1, scores2 = probit_rescaling(scores1, scores2, metric='probit-E')
+        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='DC-E-probit')
 
     # Weighted degree centrality based on raw-P (WDC-P)
     elif node_metric == 'WDC-P':
         nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='WDC-P')
 
-    # Weighted degree centrality based on rescaled-E (WDC-E)
-    elif node_metric == 'WDC-E':
-        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='WDC-E')
+    # Weighted degree centrality based on std-E (WDC-E-std)
+    elif node_metric == 'WDC-E-std':
+        if 'std-E' not in scores1.columns:
+            scores1, scores2 = std_rescaling(scores1, scores2, metric='std-E')
+        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='WDC-E-std')
 
-    # PageRank centrality based on absolute values of rescaled-E (PRC-E)
-    elif node_metric == 'PRC-E':
-        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='PRC-E')
-    
+    # Weighted degree centrality based on probit-E (WDC-E-probit)
+    elif node_metric == 'WDC-E-probit':
+        if 'probit-E' not in scores1.columns:
+            scores1, scores2 = probit_rescaling(scores1, scores2, metric='probit-E')
+        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='WDC-E-probit')
+
+    # PageRank centrality based on std-E (PRC-E-std)
+    elif node_metric == 'PRC-E-std':
+        if 'std-E' not in scores1.columns:
+            scores1, scores2 = std_rescaling(scores1, scores2, metric='std-E')
+        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='PRC-E-std')
+
+    # PageRank centrality based on probit-E (PRC-E-probit)
+    elif node_metric == 'PRC-E-probit':
+        if 'probit-E' not in scores1.columns:
+            scores1, scores2 = probit_rescaling(scores1, scores2, metric='probit-E')
+        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='PRC-E-probit')
+
     # PageRank centrality based on raw-P (PRC-P)
     elif node_metric == 'PRC-P':
         nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='PRC-P')
 
     else:
-        raise ValueError(f"Invalid node metric '{node_metric}'. Choose from: 'STC', 'DC-P', 'DC-E', 'WDC-P', 'WDC-E', 'PRC-P', or 'PRC-E'.")
+        raise ValueError(f"Invalid node metric '{node_metric}'. Choose from: 'STC', 'DC-P', 'DC-E-std', 'DC-E-probit', 'WDC-P', 'WDC-E-std', 'WDC-E-probit', 'PRC-P', 'PRC-E-std', or 'PRC-E-probit'.")
     
     # Extract only the relevant columns (eliminate intermediary columns used for computation)
     nodes_diff = nodes_diff[[node_metric]]

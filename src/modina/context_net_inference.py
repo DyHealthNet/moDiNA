@@ -133,6 +133,24 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
                                           correction=correction)
     scores = pd.concat([scores, dummy], ignore_index=True)
 
+    # Convert Cohen's d -> point-biserial r for ttest edges using actual binary group sizes.
+    # label1 is the binary variable at this point (before the min/max label sort below).
+    if test_type == 'parametric' and (scores['test_type'] == 'ttest').any():
+        for bi_col in bi.columns:
+            col_vals = bi[bi_col].to_numpy(dtype=float)
+            valid_vals = col_vals[col_vals != nan_value]
+            unique_vals = np.unique(valid_vals)
+            if len(unique_vals) != 2:
+                continue
+            n_g1 = int(np.sum(valid_vals == unique_vals[0]))
+            n_g2 = int(np.sum(valid_vals == unique_vals[1]))
+            if n_g1 == 0 or n_g2 == 0:
+                continue
+            correction_factor = (n_g1 + n_g2) ** 2 / (n_g1 * n_g2)
+            mask = (scores['test_type'] == 'ttest') & (scores['label1'] == bi_col)
+            d = scores.loc[mask, 'raw-E'].to_numpy()
+            scores.loc[mask, 'raw-E'] = d / np.sqrt(d ** 2 + correction_factor)
+
     # Sort
     l1 = scores[['label1', 'label2']].min(axis=1)
     l2 = scores[['label1', 'label2']].max(axis=1)

@@ -1,4 +1,4 @@
-from modina.statistics_utils import pre_rescaling
+from modina.statistics_utils import std_rescaling
 
 import logging
 import math
@@ -24,7 +24,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     :param context2: The second context for the differential network analysis.
     :param filter_method: Method used for filtering. Defaults to None.
     :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
-    :param filter_metric: Edge metric used for filtering. Options include 'raw-P' and 'rescaled-E'. Defaults to None.
+    :param filter_metric: Edge metric used for filtering. Options include 'raw-P' and 'std-E'. Defaults to None.
     :param filter_rule: Rule to integrate the networks during filtering. Defaults to None.
     :param path: Optional path to save the filtered scores and context data as CSV files. Defaults to None.
     :return: A tuple containing the filtered scores and context data.
@@ -47,8 +47,8 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         raise ValueError("Please provide a 'filter_param'.")
 
     # Rescaling
-    if filter_metric == 'rescaled-E':
-        scores1, scores2 = pre_rescaling(scores1=scores1, scores2=scores2, metric='rescaled-E') 
+    if filter_metric == 'std-E':
+        scores1, scores2 = std_rescaling(scores1=scores1, scores2=scores2, metric='std-E')
 
     # Compute number of edges according to the specified method
     threshold1 = None
@@ -85,11 +85,11 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     if filter_metric == 'raw-P':
         threshold1 = scores1[filter_metric].sort_values(ascending=True).iloc[n_filtered_edges - 1]
         threshold2 = scores2[filter_metric].sort_values(ascending=True).iloc[n_filtered_edges - 1]
-    elif filter_metric == 'rescaled-E':
+    elif filter_metric == 'std-E':
         threshold1 = np.abs(scores1[filter_metric]).sort_values(ascending=False).iloc[n_filtered_edges - 1]
         threshold2 = np.abs(scores2[filter_metric]).sort_values(ascending=False).iloc[n_filtered_edges - 1]
     else:
-        raise ValueError(f"Invalid filter metric '{filter_metric}'. Choose from: 'raw-P' or 'rescaled-E'.")
+        raise ValueError(f"Invalid filter metric '{filter_metric}'. Choose from: 'raw-P' or 'std-E'.")
     
     
     # Log thresholds
@@ -131,7 +131,8 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         fill_values = {
             'raw-P': 1.0,
             'raw-E': 0.0,
-            'rescaled-E': 0.0
+            'std-E': 0.0,
+            'probit-E': 0.0
         }
 
         for metric, value in fill_values.items():

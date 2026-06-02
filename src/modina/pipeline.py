@@ -101,7 +101,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         'ranking_alg': ranking_alg
     }
 
-    if edge_metric == 'int-IS':
+    if edge_metric in ('std-int-IS', 'probit-int-IS'):
         params['max_path_length'] = max_path_length
 
     if config_path is not None:

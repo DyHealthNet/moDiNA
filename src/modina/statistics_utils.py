@@ -3,62 +3,33 @@ import pandas as pd
 from scipy import stats
 from typing import Tuple
 
-# Pre-rescaling (Z-score normalization)
-# TODO: implement a filtering version (abs-E)?
-def pre_rescaling(scores1, scores2, metric='rescaled-E'):
+
+# Convert Cohen's d to point-biserial r for ttest edges.
+# Uses context sample sizes to account for unequal groups:
+# equal sizes (n1==n2): r = d / sqrt(d² + 4)
+# unequal sizes:        r = d / sqrt(d² + (n1+n2)² / (n1*n2))
+def cohens_d_to_r(scores1, scores2, n1: int, n2: int):
     scores1 = scores1.copy()
     scores2 = scores2.copy()
-    
-    if metric == 'rescaled-E':
-        metric_raw = 'raw-E'
 
-        # Consider both contexts at the same time to make them comparable
-        scores1[metric] = np.nan
-        scores2[metric] = np.nan
+    correction = (n1 + n2) ** 2 / (n1 * n2)
 
-        # Perform rescaling for every test type separately
-        if not scores1['test_type'].equals(scores2['test_type']):
-            raise ValueError("scores1 and scores2 must have identical 'test_type' columns.")
-        test_types = np.unique(scores1['test_type'])
-        for test in test_types:
-            scores1_filtered = scores1[scores1['test_type'] == test]
-            scores2_filtered = scores2[scores2['test_type'] == test]
-            values = np.concatenate([scores1_filtered[metric_raw].to_numpy(), scores2_filtered[metric_raw].to_numpy()])
+    for scores in [scores1, scores2]:
+        mask = scores['test_type'] == 'ttest'
+        if mask.any():
+            d = scores.loc[mask, 'raw-E'].to_numpy()
+            scores.loc[mask, 'raw-E'] = d / np.sqrt(d ** 2 + correction)
 
-            # Z-score normalization
-            mean = np.mean(values)
-            std = np.std(values)
-
-            rescaled1 = None
-            rescaled2 = None
-
-            if std == 0:
-                rescaled1 = 0
-                rescaled2 = 0
-            else:
-                rescaled1 = (scores1_filtered[metric_raw] - mean) / std
-                rescaled2 = (scores2_filtered[metric_raw] - mean) / std
-
-            scores1.loc[scores1['test_type'] == test, metric] = rescaled1
-            scores2.loc[scores2['test_type'] == test, metric] = rescaled2
-    
-    else:
-        raise ValueError(f"Invalid metric '{metric}'. Only 'rescaled-E' is supported.")
-    
     return scores1, scores2
 
 
-NON_NEGATIVE_TESTS = frozenset({'pearson', 'chi2', 'anova', 'kruskal'})
-
-
-# Pre-rescaling with type-aware normalization:
-# signed test types get full Z-score; non-negative test types are scaled only (no mean subtraction)
-def pre_new_rescaling(scores1, scores2, metric='rescaled-new-E'):
+# Std rescaling (divide raw-E by pooled std per test type)
+def std_rescaling(scores1, scores2, metric='std-E'):
     scores1 = scores1.copy()
     scores2 = scores2.copy()
 
-    if metric != 'rescaled-new-E':
-        raise ValueError(f"Invalid metric '{metric}'. Only 'rescaled-new-E' is supported.")
+    if metric != 'std-E':
+        raise ValueError(f"Invalid metric '{metric}'. Only 'std-E' is supported.")
 
     metric_raw = 'raw-E'
     scores1[metric] = np.nan
@@ -84,50 +55,6 @@ def pre_new_rescaling(scores1, scores2, metric='rescaled-new-E'):
 
     return scores1, scores2
 
-
-# Post-rescaling (Min-Max normalization)
-def post_rescaling(diff_scores, metric):
-    diff_scores = diff_scores.copy()
-
-    if metric == 'post-LS':
-        metric_raw = 'diff-LS_signed'
-    elif metric == 'post-E':
-        metric_raw = 'diff-E_signed'
-
-    else:
-        raise ValueError(f"Invalid metric '{metric}'. Only 'post-E' and 'post-LS' are supported.")
-    
-    diff_scores[metric] = np.nan
-
-    # Perform rescaling for every test type separately
-    test_types = np.unique(diff_scores['test_type'])
-    for test in test_types:
-        diff_scores_filtered = diff_scores[diff_scores['test_type'] == test]
-        values = diff_scores_filtered[metric_raw].to_numpy()
-
-        # Min-Max normalization
-        #min_val = np.min(values)
-        #max_val = np.max(values)
-
-        #f min_val == max_val:
-        #    rescaled = 0
-        #else:
-        #    rescaled = (diff_scores_filtered[metric_raw] - min_val) / (max_val - min_val)
-        
-        # Z-score normalization
-        mean = np.mean(values)
-        std = np.std(values)
-
-        rescaled = None
-
-        if std == 0:
-            rescaled = 0
-        else:
-            rescaled = abs((diff_scores_filtered[metric_raw] - mean) / std)
-
-        diff_scores.loc[diff_scores['test_type'] == test, metric] = rescaled
-        
-    return diff_scores
 
 
 # Probit rescaling (rank-based normalization)
