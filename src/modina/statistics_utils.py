@@ -24,76 +24,90 @@ def cohens_d_to_r(scores1, scores2, n1: int, n2: int):
 
 
 # Std rescaling (divide raw-E by pooled std per test type)
-def std_rescaling(scores1, scores2, metric='std-E'):
+def std_rescaling(scores1, scores2=None, metric='std-E'):
     scores1 = scores1.copy()
-    scores2 = scores2.copy()
-
     if metric != 'std-E':
         raise ValueError(f"Invalid metric '{metric}'. Only 'std-E' is supported.")
-
+    
     metric_raw = 'raw-E'
     scores1[metric] = np.nan
-    scores2[metric] = np.nan
 
-    if not scores1['test_type'].equals(scores2['test_type']):
-        raise ValueError("scores1 and scores2 must have identical 'test_type' columns.")
+    if scores2 is not None:
+        scores2 = scores2.copy()
+        scores2[metric] = np.nan
 
-    for test in np.unique(scores1['test_type']):
-        s1f = scores1[scores1['test_type'] == test]
-        s2f = scores2[scores2['test_type'] == test]
-        values = np.concatenate([s1f[metric_raw].to_numpy(), s2f[metric_raw].to_numpy()])
-        std = np.std(values)
-
-        if std == 0:
-            rescaled1 = rescaled2 = 0
-        else:
-            rescaled1 = s1f[metric_raw] / std
-            rescaled2 = s2f[metric_raw] / std
-
-        scores1.loc[scores1['test_type'] == test, metric] = rescaled1
-        scores2.loc[scores2['test_type'] == test, metric] = rescaled2
-
-    return scores1, scores2
-
-
-
-# Probit rescaling (rank-based normalization)
-def probit_rescaling(scores1, scores2, metric='probit-E'):
-    scores1 = scores1.copy()
-    scores2 = scores2.copy()
-
-    if metric != 'probit-E':
-        raise ValueError(f"Invalid metric '{metric}'. Only 'probit-E' is supported.")
-
-    metric_raw = 'raw-E'
-    scores1[metric] = np.nan
-    scores2[metric] = np.nan
-
-    if not scores1['test_type'].equals(scores2['test_type']):
+    if scores2 is not None and scores1['test_type'].equals(scores2['test_type']):
         raise ValueError("scores1 and scores2 must have identical 'test_type' columns.")
 
     for test in np.unique(scores1['test_type']):
         idx1 = scores1['test_type'] == test
-        idx2 = scores2['test_type'] == test
         v1 = scores1.loc[idx1, metric_raw].to_numpy()
-        v2 = scores2.loc[idx2, metric_raw].to_numpy()
-        combined = np.concatenate([v1, v2])
-        n = len(combined)
 
-        # Folded probit: rank |raw-E| so association strength (not sign) determines rank.
-        # Percentile mapped to (0.5, 1) so norm.ppf gives values in (0, +inf).
-        # Sign is restored afterward, so strong negative associations rank equally to
-        # strong positive ones. For non-negative test types sign=+1 always (no-op).
-        signs = np.sign(combined)
-        ranks = stats.rankdata(np.abs(combined))
-        percentiles = 0.5 + ranks / (n + 1) * 0.5
-        probit_magnitude = stats.norm.ppf(percentiles)
-        probit_vals = signs * probit_magnitude
+        if scores2 is not None:
+            idx2 = scores2['test_type'] == test
+            v2 = scores2.loc[idx2, metric_raw].to_numpy()
+            values = np.concatenate([v1, v2])
+            std = np.std(values)
+            if std == 0:
+                scores1.loc[idx1, metric] = 0
+                scores2.loc[idx2, metric] = 0
+            else:
+                scores1.loc[idx1, metric] = v1 / std
+                scores2.loc[idx2, metric] = v2 / std
+        else:
+            std = np.std(v1)
+            if std == 0:
+                scores1.loc[idx1, metric] = 0
+            else:
+                scores1.loc[idx1, metric] = v1 / std
 
-        scores1.loc[idx1, metric] = probit_vals[:len(v1)]
-        scores2.loc[idx2, metric] = probit_vals[len(v1):]
+    return (scores1, scores2) if scores2 is not None else scores1
 
-    return scores1, scores2
+
+
+# Probit rescaling (rank-based normalization)
+def probit_rescaling(scores1, scores2=None, metric='probit-E'):
+    scores1 = scores1.copy()
+    if metric != 'probit-E':
+        raise ValueError(f"Invalid metric '{metric}'. Only 'probit-E' is supported.")
+    metric_raw = 'raw-E'
+    scores1[metric] = np.nan
+
+    if scores2 is not None:
+            scores2 = scores2.copy()
+            scores2[metric] = np.nan
+            if not scores1['test_type'].equals(scores2['test_type']):
+                raise ValueError("scores1 and scores2 must have identical 'test_type' columns.")
+
+    for test in np.unique(scores1['test_type']):
+        idx1 = scores1['test_type'] == test
+        v1 = scores1.loc[idx1, metric_raw].to_numpy()
+
+        if scores2 is not None:
+            idx2 = scores2['test_type'] == test
+            v2 = scores2.loc[idx2, metric_raw].to_numpy()
+            combined = np.concatenate([v1, v2])
+            n = len(combined)
+
+            # Folded probit: rank |raw-E| so association strength (not sign) determines rank.
+            signs = np.sign(combined)
+            ranks = stats.rankdata(np.abs(combined))
+            percentiles = 0.5 + ranks / (n + 1) * 0.5
+            probit_magnitude = stats.norm.ppf(percentiles)
+            probit_vals = signs * probit_magnitude
+            scores1.loc[idx1, metric] = probit_vals[:len(v1)]
+            scores2.loc[idx2, metric] = probit_vals[len(v1):]
+
+        else:
+            n = len(v1)
+            signs = np.sign(v1)
+            ranks = stats.rankdata(np.abs(v1))
+            percentiles = 0.5 + ranks / (n + 1) * 0.5
+            probit_magnitude = stats.norm.ppf(percentiles)
+            probit_vals = signs * probit_magnitude
+            scores1.loc[idx1, metric] = probit_vals
+
+    return (scores1, scores2) if scores2 is not None else scores1
 
 
 def _separate_types(all_data, meta_file) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:

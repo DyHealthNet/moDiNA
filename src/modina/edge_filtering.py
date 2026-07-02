@@ -170,3 +170,121 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         context2_filtered.to_csv(os.path.join(path, 'context2_filtered.csv'), index=False)
 
     return scores1_filtered, scores2_filtered, context1_filtered, context2_filtered
+
+
+def filter_single(
+    scores: pd.DataFrame,
+    context: pd.DataFrame,
+    filter_method: str,
+    filter_param: float,
+    filter_metric: str,
+    path: Optional[str] = None
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+
+    scores = scores.copy()
+
+    if filter_method is None:
+        raise ValueError("Please provide a 'filter_method'.")
+
+    if filter_metric is None:
+        raise ValueError("Please provide a 'filter_metric'.")
+
+    if filter_param is None:
+        raise ValueError("Please provide a 'filter_param'.")
+
+    # Rescaling
+    if filter_metric == "std-E":
+        scores = std_rescaling(scores)
+
+    n_nodes = context.shape[1]
+    n_edges_before = scores.shape[0]
+
+    # Determine number of edges to keep
+    if filter_method == "degree":
+        degree = filter_param
+
+        if degree < 1 or degree >= n_nodes:
+            raise ValueError(
+                f"For 'degree' filtering, 'filter_param' must be between 1 and {n_nodes - 1}."
+            )
+
+        n_filtered_edges = math.ceil(degree * n_nodes / 2)
+
+    elif filter_method == "density":
+        density = filter_param
+
+        if density <= 0.0 or density > 1.0:
+            raise ValueError(
+                "For 'density' filtering, 'filter_param' must be between 0 and 1."
+            )
+
+        possible_edges = n_nodes * (n_nodes - 1) / 2
+        n_filtered_edges = math.ceil(density * possible_edges)
+
+    else:
+        raise ValueError(
+            f"Invalid filtering method '{filter_method}'. Choose from: 'degree' or 'density'."
+        )
+
+    logging.info(
+        f"Filtering edges using method '{filter_method}' with parameter {filter_param}."
+    )
+    logging.info(
+        f"Number of edges to retain after filtering: {n_filtered_edges}."
+    )
+
+    # Determine threshold
+    if filter_metric == "raw-P":
+        threshold = (
+            scores[filter_metric]
+            .sort_values(ascending=True)
+            .iloc[n_filtered_edges - 1]
+        )
+        mask = scores[filter_metric] <= threshold
+
+    elif filter_metric in {"std-E", "probit-E"}:
+        threshold = (
+            np.abs(scores[filter_metric])
+            .sort_values(ascending=False)
+            .iloc[n_filtered_edges - 1]
+        )
+        mask = np.abs(scores[filter_metric]) >= threshold
+
+    else:
+        raise ValueError(
+            f"Invalid filter metric '{filter_metric}'. "
+            "Choose from: 'raw-P', 'std-E', or 'probit-E'."
+        )
+    logging.info(f"Filtering threshold: {threshold}.")
+
+    # Apply filtering
+    scores_filtered = scores[mask].copy()
+
+    # Filter context
+    filtered_nodes = pd.unique(
+        np.concatenate([
+            scores_filtered["label1"].values,
+            scores_filtered["label2"].values
+        ])
+    )
+
+    context_filtered = context[filtered_nodes].copy()
+
+    n_edges_after = scores_filtered.shape[0]
+
+    logging.info(
+        f"Reduced the number of edges from {n_edges_before} to {n_edges_after}."
+    )
+
+    if path is not None:
+        scores_filtered.to_csv(
+            os.path.join(path, "scores_filtered.csv"),
+            index=False
+        )
+
+        context_filtered.to_csv(
+            os.path.join(path, "context_filtered.csv"),
+            index=False
+        )
+
+    return scores_filtered, context_filtered
