@@ -197,13 +197,14 @@ Parameters:
 
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
 - ``meta_file``: pandas DataFrame specifying the variable metadata. Must contain the columns ``label`` and ``type`` describing each variable and its data type.
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'pre-E'``, ``'post-E'``, ``'pre-PE'``, ``'post-PE'``, ``'pre-LS'``, ``'post-LS'``,  ``'int-IS'``.
-- ``node_metric``: Node-level metric used to compute the differential network. Options include ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'STC'``.  
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'diff-E'``, ``'diff-L-P'``, ``'diff-L-PE'``, ``'sum-diff-PE'``, ``'sum-diff-L-PE'``, ``'int-IS-E'``.
+- ``node_metric``: Node-level metric used to compute the differential network. Options include ``'STC'``, ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-L-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'PRC-L-P'``, ``'PRC-E'``.
 - ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'``, ``'direct_node'`` and ``'direct_edge'``. Defaults to ``'PageRank+'``.
-- ``filter_method``: Optional filtering method applied before constructing the differential network. Options include ``'degree'``, ``'density'``. Per default, no filtering is performed.
+- ``filter_method``: Filtering method. Options include ``'degree'``, ``'density'``. Required when ``filter_target`` is not ``None``.
 - ``filter_param``: Parameter controlling the filtering strength.
-- ``filter_metric``: Edge metric used for filtering. Options include ``'raw-P'`` and ``'rescaled-E'``.
-- ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'``.
+- ``filter_target``: Which network to filter. ``None`` (default) performs no filtering. ``'context-specific'`` filters the two context networks *before* constructing the differential network (using ``filter_metric`` and ``filter_rule``); ``'differential'`` filters the differential network *after* its construction, directly on the computed ``edge_metric`` (in this case ``filter_metric`` and ``filter_rule`` are ignored). When ``filter_target`` is not ``None``, ``filter_method`` must be provided.
+- ``filter_metric``: Edge metric used for filtering. Options include ``'raw-P'`` and ``'rescaled-E'``. Only used when ``filter_target='context-specific'``.
+- ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'``. Only used when ``filter_target='context-specific'``.
 - ``max_path_length``: Maximum path length considered when computing integrated interaction scores. Defaults to ``2``.
 - ``test_type``: Statistical test used for association score calculation. Options include ``'parametric'`` and ``'nonparametric'``. Defaults to ``'nonparametric'``.
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
@@ -217,7 +218,7 @@ Parameters:
 
     Based on an extensive benchmark analysis performed on simulated data, we recommend the following pipeline configuration:
 
-    - Edge Metric: ``pre-LS``
+    - Edge Metric: ``diff-L-PE``
     - Node Metric: ``STC``
     - Ranking Algorithm: ``PageRank+``
 
@@ -242,9 +243,10 @@ Example:
         context1=context1,
         context2=context2,
         meta_file=meta,
-        edge_metric='pre-LS',
+        edge_metric='diff-L-PE',
         node_metric='STC',
         ranking_alg='PageRank+',
+        filter_target='context-specific',
         filter_method='density',
         filter_param=0.5,
         filter_metric='raw-P',
@@ -351,19 +353,35 @@ Example:
 Edge Filtering
 ~~~~~~~~~~~~~~
 The statistical network inference step produces fully connected networks, where every pair of variables is linked by an edge.
-To reduce network complexity, insignificant edges with large p-values or small effect sizes can be removed using the ``filter`` function.
+To reduce network complexity, insignificant edges with large p-values or small effect sizes can be removed. All filtering
+functions share the same basic principle: edges are first ordered according to a score and then thresholded to achieve a
+desired network characteristic. The ``degree`` method reduces a network to a specified average node degree, while the
+``density`` method enforces a predefined network density by keeping only a certain percentage of all possible edges.
 
-Three different filtering methods are available, all following the same basic principle: edges are first ordered
-according to their association scores and then thresholded to achieve a desired network characteristic.
-The ``degree`` method reduces the network to a specified
-average node degree, while the ``density`` method enforces a predefined network density by keeping only a certain percentage
-of all possible edges. 
+**moDiNA** offers three filtering functions depending on *what* is filtered:
 
-After filtering, there are two alternative rules for integrating the two networks.
+- ``filter``: filters the two **context-specific** networks *before* the differential network is built. This is the
+  ``filter_target='context-specific'`` behaviour of :func:`diffnet_analysis`.
+- ``filter_single``: filters a **single** context network. Useful when you are only interested in filtering one network
+  outside of a full differential analysis.
+- ``filter_differential``: filters the **differential** network *after* it has been constructed, directly on the
+  already-computed ``edge_metric``. This is the ``filter_target='differential'`` behaviour of :func:`diffnet_analysis`.
+
+Filtering the context-specific networks (``filter`` / ``filter_single``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Context-specific filtering orders the edges of each context network according to a ``filter_metric`` — either the
+multiple testing-adjusted p-value (``'raw-P'``) or the absolute Z-score-normalized effect size (``'rescaled-E'``).
+
+When filtering the two context networks jointly with ``filter``, there are two alternative rules for integrating them.
 The ``union`` rule retains all edges that are present in either network, preserving their original association scores.
 This approach can recover edges that were eliminated in one network. However, the resulting context-specific networks remain structurally identical.
 For edge metrics such as DC-P or DC-E, which rely solely on network topology, it is therefore recommended to use the ``zero`` rule instead.
 Under the ``zero`` rule, removed edges are treated as missing and will be assigned insignificant p-values of 1.0 and effect sizes of 0.0 in downstream calculations.
+
+The ``filter_single`` function filters a single network with the same ``filter_method``/``filter_param``/``filter_metric``
+options, but without a ``filter_rule`` (there is only one network, so nothing has to be integrated). Filtering a single
+network on ``'rescaled-E'`` requires the ``rescaled-E`` column to already be present, since it is produced by a joint
+rescaling over both contexts; otherwise filter on ``'raw-P'``.
 
 Parameters:
 
@@ -412,10 +430,58 @@ Examples:
         filter_rule='zero'
     )
 
+    # Filtering a single context network
+    from modina.edge_filtering import filter_single
+
+    scores_filtered, context_filtered = filter_single(
+        scores=scores1,
+        context=context1,
+        filter_method='degree',
+        filter_param=5,
+        filter_metric='raw-P'
+    )
+
+
+Filtering the differential network (``filter_differential``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Instead of filtering the context-specific networks, the **differential** network itself can be filtered after it has
+been constructed. Because the differential network is a single graph whose edges already carry the chosen ``edge_metric``
+(e.g. ``diff-E``, ``diff-P``), there is nothing to integrate across contexts and no p-value-vs-effect-size choice to make:
+filtering always keeps the strongest edges according to the computed ``edge_metric``. Consequently, ``filter_metric`` and
+``filter_rule`` do not apply here.
+
+Parameters:
+
+- ``edges_diff``: pandas DataFrame containing the differential edge scores (as returned by :func:`compute_diff_edges`).
+- ``edge_metric``: Name of the differential edge-metric column to filter on.
+- ``filter_method``: Filtering method to apply. Options include ``'degree'`` or ``'density'``.
+- ``filter_param``: Parameter controlling the strength or threshold of the filtering method.
+- ``path``: Optional path to save the filtered edges and per-node statistics as CSV files. Defaults to None.
+
+Returns:
+
+A tuple ``(edges_filtered, edge_node_stats)``:
+
+- ``edges_filtered``: pandas DataFrame containing the retained differential edges.
+- ``edge_node_stats``: pandas DataFrame with the per-node statistics recomputed over the retained edges.
+
+Example:
+
+.. code-block:: python
+
+    from modina.edge_filtering import filter_differential
+
+    edges_filtered, edge_node_stats = filter_differential(
+        edges_diff=edges_diff,
+        edge_metric='diff-E',
+        filter_method='degree',
+        filter_param=5
+    )
+
 
 .. note::
     Edge filtering can substantially reduce the runtime of **moDiNA** for large datasets. It is especially recommended
-    when using the computationally heavy ``int-IS`` edge metric to construct the differential network. 
+    when using the computationally heavy ``int-IS`` edge metric to construct the differential network.
 
 
 .. _diffnet:
@@ -441,8 +507,8 @@ Parameters:
 
 - ``scores1``, ``scores2``: pandas DataFrames containing the statistical association scores of the two context-specific networks.
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'pre-E'``, ``'post-E'``, ``'pre-PE'``, ``'post-PE'``, ``'pre-LS'``, ``'post-LS'``,  ``'int-IS'``.
-- ``node_metric``: Node-level metric used to compute the differential network. Options include ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'STC'``.  
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'diff-E'``, ``'diff-L-P'``, ``'diff-L-PE'``, ``'sum-diff-PE'``, ``'sum-diff-L-PE'``, ``'int-IS-E'``.
+- ``node_metric``: Node-level metric used to compute the differential network. Options include ``'STC'``, ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-L-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'PRC-L-P'``, ``'PRC-E'``.
 - ``max_path_length``: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to ``2``.
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
 - ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.
@@ -454,10 +520,11 @@ Parameters:
 
 Returns:
 
-A tuple ``(edges_diff, nodes_diff)``:
+A tuple ``(edges_diff, nodes_diff, edge_node_stats)``:
 
 - ``edges_diff``: pandas DataFrame containing the computed differential edge scores.
 - ``nodes_diff``: pandas DataFrame containing the computed differential node scores.
+- ``edge_node_stats``: node-indexed pandas DataFrame with summary statistics (min, max, median, mean, sd) of the (absolute) edge metric over the edges incident to each node, plus ``edge-percentile-mean`` (mean percentile rank of a node's edges within the global distribution of all edges). ``None`` if no ``edge_metric`` was provided.
 
 Example:
 
@@ -465,12 +532,12 @@ Example:
 
     from modina.diff_network import compute_diff_network
 
-    edges_diff, nodes_diff = compute_diff_network(
+    edges_diff, nodes_diff, edge_node_stats = compute_diff_network(
         scores1=scores_context1,
         scores2=scores_context2,
         context1=data_context1,
         context2=data_context2,
-        edge_metric='pre-LS',
+        edge_metric='diff-L-PE',
         node_metric='STC',
         test_type='nonparametric',
         meta_file=meta
@@ -511,8 +578,13 @@ Parameters:
 - ``nodes_diff``: pandas DataFrame containing differential node scores.
 - ``edges_diff``: pandas DataFrame containing differential edge scores.
 - ``ranking_alg``: Ranking algorithm to compute. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'``, ``'direct_node'`` and ``'direct_edge'``.
-- ``meta_file``: Optional pandas DataFrame specifying node metadata (columns ``label`` and ``type``), used to generate type-specific rankings. 
+- ``meta_file``: Optional pandas DataFrame specifying node metadata (columns ``label`` and ``type``), used to generate type-specific rankings.
 - ``path``: Optional file path to save the resulting ranking as a CSV file.
+- ``edge_node_stats``: Optional precomputed per-node edge statistics (as returned by ``compute_diff_edges`` / ``compute_diff_network``). If omitted but an edge metric was employed, the statistics are computed on the fly.
+
+.. note::
+
+   For the node-indexed rankings the output is additionally enriched with the node-metric value (when a node metric was employed) and with per-node edge statistics ``edge-min``, ``edge-max``, ``edge-median``, ``edge-mean``, ``edge-sd`` over the absolute edge metric, plus ``edge-percentile-mean`` (the mean percentile rank of a node's edges within the global distribution of all edges) when an edge metric was employed. The ``edgeRank`` output is edge-indexed and left unchanged.
 
 Returns:
 
