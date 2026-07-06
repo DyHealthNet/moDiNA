@@ -66,25 +66,25 @@ def probit_rescaling(scores1, scores2, metric='rescaled-E'):
             combined = np.concatenate([v1, v2])
             n = len(combined)
 
-        # Folded probit: rank |raw-E| so association strength (not sign) determines rank.
-        # Percentile mapped to (0.5, 1) so norm.ppf gives values in (0, +inf).
-        # Sign is restored afterward, so strong negative associations rank equally to
-        # strong positive ones. For non-negative test types sign=+1 always (no-op).
-        if n == 1:
-            scores1.loc[idx1, metric] = 0.0
-            scores2.loc[idx2, metric] = 0.0
-            continue
-        signs = np.sign(combined)
-        ranks = stats.rankdata(np.abs(combined))
-        # Map rank 1 → percentile 0.5 → probit 0.0; rank n → percentile 0.975 → probit 1.96.
-        # Factor 0.475 gives max = norm.ppf(0.975) = 1.96 (z-score for p=0.05 two-sided).
-        # Formula (rank-1)/(n-1) eliminates n-dependency at both endpoints.
-        percentiles = 0.5 + (ranks - 1) / (n - 1) * 0.475
-        probit_magnitude = stats.norm.ppf(percentiles)
-        probit_vals = signs * probit_magnitude
+            # Folded probit: rank |raw-E| so association strength (not sign) determines rank.
+            # Percentile mapped to (0.5, 1) so norm.ppf gives values in (0, +inf).
+            # Sign is restored afterward, so strong negative associations rank equally to
+            # strong positive ones. For non-negative test types sign=+1 always (no-op).
+            if n == 1:
+                scores1.loc[idx1, metric] = 0.0
+                scores2.loc[idx2, metric] = 0.0
+                continue
+            signs = np.sign(combined)
+            ranks = stats.rankdata(np.abs(combined))
+            # Map rank 1 → percentile 0.5 → probit 0.0; rank n → percentile 0.975 → probit 1.96.
+            # Factor 0.475 gives max = norm.ppf(0.975) = 1.96 (z-score for p=0.05 two-sided).
+            # Formula (rank-1)/(n-1) eliminates n-dependency at both endpoints.
+            percentiles = 0.5 + (ranks - 1) / (n - 1) * 0.475
+            probit_magnitude = stats.norm.ppf(percentiles)
+            probit_vals = signs * probit_magnitude
 
-        scores1.loc[idx1, metric] = probit_vals[:len(v1)]
-        scores2.loc[idx2, metric] = probit_vals[len(v1):]
+            scores1.loc[idx1, metric] = probit_vals[:len(v1)]
+            scores2.loc[idx2, metric] = probit_vals[len(v1):]
 
         else:
             n = len(v1)
