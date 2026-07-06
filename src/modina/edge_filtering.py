@@ -1,4 +1,4 @@
-from modina.statistics_utils import std_rescaling
+from modina.statistics_utils import probit_rescaling
 
 import logging
 import math
@@ -10,7 +10,50 @@ import numpy as np
 logging.basicConfig(level = logging.INFO)
 
 
-# Edge filtering
+def _num_target_edges(filter_method: Optional[str], filter_param: float, n_nodes: int) -> int:
+    """
+    Translate a filtering method ('degree' or 'density') and its parameter into the
+    target number of edges to retain for a network with n_nodes nodes.
+    """
+    if filter_method == 'degree':
+        degree = filter_param
+
+        if degree < 1 or degree >= n_nodes:
+            raise ValueError(f"For 'degree' filtering, 'filter_param' must be between 1 and {n_nodes - 1}.")
+
+        return math.ceil(degree * n_nodes / 2)
+
+    elif filter_method == 'density':
+        density = filter_param
+
+        if density <= 0.0 or density > 1.0:
+            raise ValueError("For 'density' filtering, 'filter_param' must be between 0 and 1.")
+
+        possible_edges = n_nodes * (n_nodes - 1) / 2
+        return math.ceil(density * possible_edges)
+
+    else:
+        raise ValueError(f"Invalid filtering method '{filter_method}'. Choose from: 'degree' or 'density'")
+
+
+def _edge_keep_mask(scores: pd.DataFrame, filter_metric: str, n_target: int) -> pd.Series:
+    """
+    Compute a boolean 'keep' mask for a single network that retains the n_target strongest
+    edges according to filter_metric. For 'raw-P' the smallest p-values are kept; for
+    'rescaled-E' the largest absolute effect sizes are kept. Ties at the threshold are kept,
+    so the mask may retain slightly more than n_target edges.
+    """
+    if filter_metric == 'raw-P':
+        threshold = scores[filter_metric].sort_values(ascending=True).iloc[n_target - 1]
+        return scores[filter_metric] <= threshold
+    elif filter_metric == 'rescaled-E':
+        threshold = np.abs(scores[filter_metric]).sort_values(ascending=False).iloc[n_target - 1]
+        return np.abs(scores[filter_metric]) >= threshold
+    else:
+        raise ValueError(f"Invalid filter metric '{filter_metric}'. Choose from: 'raw-P' or 'rescaled-E'.")
+
+
+# Edge filtering (two context-specific networks)
 def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
            filter_method: Optional[str] = None, filter_param: float = 0.0,
            filter_metric: Optional[str] = None, filter_rule: Optional[str]=None,
@@ -24,7 +67,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     :param context2: The second context for the differential network analysis.
     :param filter_method: Method used for filtering. Defaults to None.
     :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
-    :param filter_metric: Edge metric used for filtering. Options include 'raw-P' and 'std-E'. Defaults to None.
+    :param filter_metric: Edge metric used for filtering. Options include 'raw-P' and 'rescaled-E'. Defaults to None.
     :param filter_rule: Rule to integrate the networks during filtering. Defaults to None.
     :param path: Optional path to save the filtered scores and context data as CSV files. Defaults to None.
     :return: A tuple containing the filtered scores and context data.
@@ -47,76 +90,30 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         raise ValueError("Please provide a 'filter_param'.")
 
     # Rescaling
-    if filter_metric == 'std-E':
-        scores1, scores2 = std_rescaling(scores1=scores1, scores2=scores2, metric='std-E')
+    if filter_metric == 'rescaled-E':
+        scores1, scores2 = probit_rescaling(scores1=scores1, scores2=scores2, metric='rescaled-E')
 
-    # Compute number of edges according to the specified method
-    threshold1 = None
-    threshold2 = None
+    # Compute number of edges to retain according to the specified method
     n_nodes = context1.shape[1]
     n_edges_before = scores1.shape[0]
+    n_filtered_edges = _num_target_edges(filter_method, filter_param, n_nodes)
 
-    if filter_method == 'degree':
-        degree = filter_param
-
-        if degree < 1 or degree >= n_nodes:
-            raise ValueError(f"For 'degree' filtering, 'filter_param' must be between 1 and {n_nodes - 1}.")
-        
-        n_filtered_edges = math.ceil(degree * n_nodes / 2)
-
-
-    elif filter_method == 'density':
-        density = filter_param
-
-        if density <= 0.0 or density > 1.0:
-            raise ValueError("For 'density' filtering, 'filter_param' must be between 0 and 1.")
-        
-        possible_edges = n_nodes * (n_nodes - 1) / 2
-        n_filtered_edges = math.ceil(density * possible_edges)
-
-    else:
-        raise ValueError(f"Invalid filtering method '{filter_method}'. Choose from: 'degree' or 'density'")
-
-    # Log n_filered_edges
     logging.info(f"Filtering edges using method '{filter_method}' with parameter {filter_param}.")
     logging.info(f"Number of edges to retain after filtering: {n_filtered_edges}.")
-    
-    # Set threshold
-    if filter_metric == 'raw-P':
-        threshold1 = scores1[filter_metric].sort_values(ascending=True).iloc[n_filtered_edges - 1]
-        threshold2 = scores2[filter_metric].sort_values(ascending=True).iloc[n_filtered_edges - 1]
-    elif filter_metric == 'std-E':
-        threshold1 = np.abs(scores1[filter_metric]).sort_values(ascending=False).iloc[n_filtered_edges - 1]
-        threshold2 = np.abs(scores2[filter_metric]).sort_values(ascending=False).iloc[n_filtered_edges - 1]
-    else:
-        raise ValueError(f"Invalid filter metric '{filter_metric}'. Choose from: 'raw-P' or 'std-E'.")
-    
-    
-    # Log thresholds
-    logging.info(f"Filtering threshold for Context 1: {threshold1}.")
-    logging.info(f"Filtering threshold for Context 2: {threshold2}.")
-    
+
+    # Compute per-context keep masks
+    mask1 = _edge_keep_mask(scores1, filter_metric, n_filtered_edges)
+    mask2 = _edge_keep_mask(scores2, filter_metric, n_filtered_edges)
+
     # Apply the filtering threshold to scores and raw data if provided
     if filter_rule == 'union':
-        if filter_metric == 'raw-P':
-            mask = (scores1[filter_metric] <= threshold1) | (
-                    scores2[filter_metric] <= threshold2)
-        else:
-            mask = (np.abs(scores1[filter_metric]) >= threshold1) | (
-                    np.abs(scores2[filter_metric]) >= threshold2)
+        mask = mask1 | mask2
 
         # Apply mask
         scores1_filtered = scores1[mask].copy()
         scores2_filtered = scores2[mask].copy()
 
     elif filter_rule == 'zero':
-        if filter_metric == 'raw-P':
-            mask1 = scores1[filter_metric] <= threshold1
-            mask2 = scores2[filter_metric] <= threshold2
-        else:
-            mask1 = np.abs(scores1[filter_metric]) >= threshold1
-            mask2 = np.abs(scores2[filter_metric]) >= threshold2
-
         # Apply mask
         filtered1 = scores1[mask1].copy()
         filtered2 = scores2[mask2].copy()
@@ -131,8 +128,9 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         fill_values = {
             'raw-P': 1.0,
             'raw-E': 0.0,
-            'std-E': 0.0,
-            'probit-E': 0.0
+            'rescaled-E': 0.0,
+            'log-P': 0.0,
+            'inv-P': 0.0
         }
 
         for metric, value in fill_values.items():
@@ -172,17 +170,24 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     return scores1_filtered, scores2_filtered, context1_filtered, context2_filtered
 
 
-def filter_single(
-    scores: pd.DataFrame,
-    context: pd.DataFrame,
-    filter_method: str,
-    filter_param: float,
-    filter_metric: str,
-    path: Optional[str] = None
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+# Edge filtering (single context-specific network)
+def filter_single(scores: pd.DataFrame, context: pd.DataFrame,
+                  filter_method: Optional[str] = None, filter_param: float = 0.0,
+                  filter_metric: Optional[str] = None,
+                  path: Optional[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Filter the association scores and context data of a single context network based on the
+    specified filtering configurations. Unlike :func:`filter`, this operates on one network only
+    and therefore does not take a 'filter_rule' (there is nothing to integrate across contexts).
 
-    scores = scores.copy()
-
+    :param scores: Statistical association scores of the context.
+    :param context: Observed data of the context (rows: samples, columns: variables).
+    :param filter_method: Method used for filtering ('degree' or 'density'). Defaults to None.
+    :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
+    :param filter_metric: Edge metric used for filtering. Options are 'raw-P' and 'rescaled-E'. Defaults to None.
+    :param path: Optional path to save the filtered scores and context data as CSV files. Defaults to None.
+    :return: A tuple (scores_filtered, context_filtered) with the filtered scores and context data.
+    """
     if filter_method is None:
         raise ValueError("Please provide a 'filter_method'.")
 
@@ -192,99 +197,91 @@ def filter_single(
     if filter_param is None:
         raise ValueError("Please provide a 'filter_param'.")
 
-    # Rescaling
-    if filter_metric == "std-E":
-        scores = std_rescaling(scores)
+    # 'rescaled-E' is produced by a joint probit rescaling over both contexts and cannot be
+    # derived from a single network. Require it to be already present in the scores.
+    if filter_metric == 'rescaled-E' and 'rescaled-E' not in scores.columns:
+        raise ValueError("Filtering a single network on 'rescaled-E' requires the 'rescaled-E' column to "
+                         "already be present, as it is computed by a joint rescaling over both contexts. "
+                         "Please filter on 'raw-P' instead, or provide already-rescaled scores.")
 
     n_nodes = context.shape[1]
     n_edges_before = scores.shape[0]
+    n_filtered_edges = _num_target_edges(filter_method, filter_param, n_nodes)
 
-    # Determine number of edges to keep
-    if filter_method == "degree":
-        degree = filter_param
+    logging.info(f"Filtering edges of a single network using method '{filter_method}' with parameter {filter_param}.")
+    logging.info(f"Number of edges to retain after filtering: {n_filtered_edges}.")
 
-        if degree < 1 or degree >= n_nodes:
-            raise ValueError(
-                f"For 'degree' filtering, 'filter_param' must be between 1 and {n_nodes - 1}."
-            )
-
-        n_filtered_edges = math.ceil(degree * n_nodes / 2)
-
-    elif filter_method == "density":
-        density = filter_param
-
-        if density <= 0.0 or density > 1.0:
-            raise ValueError(
-                "For 'density' filtering, 'filter_param' must be between 0 and 1."
-            )
-
-        possible_edges = n_nodes * (n_nodes - 1) / 2
-        n_filtered_edges = math.ceil(density * possible_edges)
-
-    else:
-        raise ValueError(
-            f"Invalid filtering method '{filter_method}'. Choose from: 'degree' or 'density'."
-        )
-
-    logging.info(
-        f"Filtering edges using method '{filter_method}' with parameter {filter_param}."
-    )
-    logging.info(
-        f"Number of edges to retain after filtering: {n_filtered_edges}."
-    )
-
-    # Determine threshold
-    if filter_metric == "raw-P":
-        threshold = (
-            scores[filter_metric]
-            .sort_values(ascending=True)
-            .iloc[n_filtered_edges - 1]
-        )
-        mask = scores[filter_metric] <= threshold
-
-    elif filter_metric in {"std-E", "probit-E"}:
-        threshold = (
-            np.abs(scores[filter_metric])
-            .sort_values(ascending=False)
-            .iloc[n_filtered_edges - 1]
-        )
-        mask = np.abs(scores[filter_metric]) >= threshold
-
-    else:
-        raise ValueError(
-            f"Invalid filter metric '{filter_metric}'. "
-            "Choose from: 'raw-P', 'std-E', or 'probit-E'."
-        )
-    logging.info(f"Filtering threshold: {threshold}.")
-
-    # Apply filtering
+    mask = _edge_keep_mask(scores, filter_metric, n_filtered_edges)
     scores_filtered = scores[mask].copy()
 
-    # Filter context
-    filtered_nodes = pd.unique(
-        np.concatenate([
-            scores_filtered["label1"].values,
-            scores_filtered["label2"].values
-        ])
-    )
-
+    # Filter context data to only include nodes present in the filtered scores
+    filtered_nodes = np.concatenate((scores_filtered['label1'].values,
+                                     scores_filtered['label2'].values))
+    filtered_nodes = pd.unique(filtered_nodes)
     context_filtered = context[filtered_nodes].copy()
 
     n_edges_after = scores_filtered.shape[0]
-
-    logging.info(
-        f"Reduced the number of edges from {n_edges_before} to {n_edges_after}."
-    )
+    logging.info(f'Reduced the number of edges from {n_edges_before} to {n_edges_after}.')
 
     if path is not None:
-        scores_filtered.to_csv(
-            os.path.join(path, "scores_filtered.csv"),
-            index=False
-        )
-
-        context_filtered.to_csv(
-            os.path.join(path, "context_filtered.csv"),
-            index=False
-        )
+        scores_filtered.to_csv(os.path.join(path, 'scores_filtered.csv'), index=False)
+        context_filtered.to_csv(os.path.join(path, 'context_filtered.csv'), index=False)
 
     return scores_filtered, context_filtered
+
+
+# Edge filtering (differential network)
+def filter_differential(edges_diff: pd.DataFrame, edge_metric: str,
+                        filter_method: Optional[str] = None, filter_param: float = 0.0,
+                        path: Optional[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Filter the differential network by retaining the strongest edges according to the
+    already-computed edge metric. Because the differential network is a single graph, there is
+    no per-context integration ('filter_rule') and no p-value-vs-effect-size choice
+    ('filter_metric'): filtering always operates on the provided edge_metric.
+
+    :param edges_diff: Differential edge scores with columns 'label1', 'label2', 'test_type',
+                       edge_metric and edge_metric + '_signed'.
+    :param edge_metric: Name of the (absolute) differential edge-metric column to filter on.
+    :param filter_method: Method used for filtering ('degree' or 'density'). Defaults to None.
+    :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
+    :param path: Optional path to save the filtered edges and per-node statistics as CSV files. Defaults to None.
+    :return: A tuple (edges_filtered, edge_node_stats) with the filtered differential edges and the
+             per-node statistics recomputed over the retained edges.
+    """
+    if filter_method is None:
+        raise ValueError("Please provide a 'filter_method'.")
+
+    if edge_metric is None:
+        raise ValueError("Please provide the 'edge_metric' to filter on.")
+
+    if edge_metric not in edges_diff.columns:
+        raise ValueError(f"Edge metric '{edge_metric}' not found in the differential network columns.")
+
+    n_nodes = pd.unique(edges_diff[['label1', 'label2']].values.ravel()).size
+    n_edges_before = edges_diff.shape[0]
+    n_filtered_edges = min(_num_target_edges(filter_method, filter_param, n_nodes), n_edges_before)
+
+    logging.info(f"Filtering differential edges on '{edge_metric}' using method '{filter_method}' "
+                 f"with parameter {filter_param}.")
+    logging.info(f"Number of edges to retain after filtering: {n_filtered_edges}.")
+
+    # Keep the strongest edges by absolute edge metric (the column is already non-negative;
+    # abs() is defensive). Preserve the original edge order after selection.
+    order = edges_diff[edge_metric].abs().sort_values(ascending=False)
+    keep_idx = order.iloc[:n_filtered_edges].index
+    edges_filtered = edges_diff.loc[keep_idx].sort_index().reset_index(drop=True)
+
+    n_edges_after = edges_filtered.shape[0]
+    logging.info(f'Reduced the number of differential edges from {n_edges_before} to {n_edges_after}.')
+
+    # Recompute per-node statistics over the retained edges. Local import mirrors ranking.py and
+    # avoids a top-level import cycle with diff_net_construction.
+    from modina.diff_net_construction import edge_node_statistics
+    edge_node_stats = edge_node_statistics(edges_filtered, edge_metric)
+
+    if path is not None:
+        edges_filtered.to_csv(os.path.join(path, 'diff_edges_filtered.csv'))
+        edge_node_stats.to_csv(os.path.join(path, 'diff_edges_filtered_node_stats.csv'))
+
+    return edges_filtered, edge_node_stats

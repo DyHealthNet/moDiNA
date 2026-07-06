@@ -1,6 +1,6 @@
 # Adapted from https://github.com/DyHealthNet/DHN-backend.git
 
-from modina.statistics_utils import _df_to_numpy, _separate_types
+from modina.statistics_utils import _df_to_numpy, _separate_types, add_pval_transforms
 
 import os
 import numpy as np
@@ -10,7 +10,17 @@ import logging
 import itertools
 from typing import Optional, Tuple
 
-EXCLUDED_EFFECTS = {'chi2', 'phi', 't', 'F', 'U', 'H'}
+# Single effect size kept per statistical test (napypi output key).
+# Cohen's d for ttest is later converted to a point-biserial r (see below).
+TEST_EFFECT_SIZES = {
+    'pearson':  'r',
+    'spearman': 'rho',
+    'mwu':      'rb',        # rank-biserial correlation
+    'ttest':    'cohens_d',  # transformed to r downstream
+    'chi2':     'cramers_v',
+    'anova':    'np2',
+    'kruskal':  'eta2',
+}
 
 
 def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89.0, correction='bh') -> pd.DataFrame:
@@ -19,9 +29,9 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
         raise ValueError('Continuous data contains non-numeric columns.')
 
     # Remap categories to start at 0 and be consecutive integers
-    nom_data = _order_categories(nom_data)
-    bi_data = _order_categories(bi_data)
-    ord_data = _order_categories(ord_data)
+    nom_data = _order_categories(nom_data, nan_value=nan_value)
+    bi_data = _order_categories(bi_data, nan_value=nan_value)
+    ord_data = _order_categories(ord_data, nan_value=nan_value)
 
     cont_nom_results = napy_nom_cont(cont_data, nom_data, test=test_type, num_workers=num_workers, nan_value=nan_value)
     logging.info("Finished continuous-nominal score calculation.")
@@ -201,7 +211,12 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
             scores[col] = scores[col].fillna(scores.apply(lambda row: map.get(tuple(sorted((meta[row['label1']], meta[row['label2']]))), 'unknown'), axis=1))
     
     logging.info("Finished handling NaN values and assigning test types.")
-    
+
+    # Precompute p-value transforms (log-P = -log10(p), inv-P = 1 - p) used by the
+    # differential edge/node metrics. Computed here, after 'raw-P' is finalized (dummy and
+    # missing associations are 1.0), so derived columns are consistent for every row.
+    scores = add_pval_transforms(scores)
+
     # Save scores
     if path is not None:
         file = os.path.join(path, f"{name}_scores.csv")
@@ -527,8 +542,8 @@ def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str,
         label2 = np.array(labels[1])[cols_idx.ravel()]
 
     p_values_raw = {key: assoc_out[key][rows_idx, cols_idx].ravel() for key in assoc_out if key.startswith('p_')}
-    effects_raw = {key: assoc_out[key][rows_idx, cols_idx].ravel() for key in assoc_out if not key.startswith('p_') and
-                   key not in EXCLUDED_EFFECTS}
+    effect_key = TEST_EFFECT_SIZES[test]
+    effects_raw = {effect_key: assoc_out[effect_key][rows_idx, cols_idx].ravel()}
 
     p_columns = [f"{test}_{key}" for key in p_values_raw.keys()]
     e_columns = [f"{test}_e_{key}" for key in effects_raw.keys()]
@@ -555,14 +570,22 @@ def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str,
     return df
 
 
-def _order_categories(data: pd.DataFrame):
+def _order_categories(data: pd.DataFrame, nan_value: Optional[float] = None):
     """
     Order categories in a dataframe such that they start at 0 and are consecutive integers.
+    The nan_value sentinel (if present) is excluded from the mapping and preserved as-is, so
+    that downstream tests still treat it as missing instead of folding it into a real category.
     :param data: the dataframe to order
+    :param nan_value: the sentinel value used for missing entries, which must not be remapped
     :return: the ordered dataframe
     """
     data = data.copy()
-    order_table = {col: {o: n for n, o in enumerate(sorted(data[col].dropna().unique()))} for col in data.columns}
-    for col, mapping in order_table.items():
+    for col in data.columns:
+        uniques = data[col].dropna().unique()
+        if nan_value is not None:
+            uniques = [u for u in uniques if u != nan_value]
+        mapping = {o: n for n, o in enumerate(sorted(uniques))}
+        if nan_value is not None:
+            mapping[nan_value] = nan_value  # keep sentinel intact -> still 'missing' to napy
         data[col] = data[col].map(mapping).astype(pd.Int64Dtype())
     return data

@@ -9,16 +9,24 @@ from typing import Tuple, Optional
 
 # Compute ranking
 def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: Optional[pd.DataFrame | pd.Series], ranking_alg: str,
-                    path: Optional[str] = None, meta_file: Optional[pd.DataFrame] = None) -> pd.DataFrame | pd.Series:
+                    path: Optional[str] = None, meta_file: Optional[pd.DataFrame] = None,
+                    edge_node_stats: Optional[pd.DataFrame] = None) -> pd.DataFrame | pd.Series:
     """
     Compute a ranking based on the specified ranking algorithm.
+
+    For the node-indexed rankings ('PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'nodeRank') the
+    output is additionally enriched with the node-metric value (when a node metric was employed) and with
+    per-node statistics over the incident edges (when an edge metric was employed). The 'edgeRank' output is
+    edge-indexed and left unchanged.
 
     :param nodes_diff: Differential node scores.
     :param edges_diff: Differential edge scores.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'nodeRank' and 'edgeRank'.
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
     :param path: Optional path to save the ranking as a CSV file.
-    :return: A tuple containing the list of ranked nodes and a dictionary with ranked nodes per data type.
+    :param edge_node_stats: Optional precomputed per-node edge statistics (see edge_node_statistics). If not
+                            provided but an edge metric was employed, the statistics are computed on the fly.
+    :return: A DataFrame containing the ranking, enriched with the node-metric value and per-node edge statistics.
     """
     if nodes_diff is not None:
         node_metric = nodes_diff.columns[0]
@@ -114,6 +122,18 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
             meta_file = meta_file.set_index('label')
             ranking_df['type'] = ranking_df['node'].map(meta_file['type'])
 
+    # Enrich node-indexed rankings with the node-metric value and per-node edge statistics.
+    # The edgeRank output is edge-indexed and is left unchanged.
+    if ranking_alg != 'edgeRank':
+        if node_metric is not None and nodes_diff is not None:
+            ranking_df[node_metric] = ranking_df['node'].map(nodes_diff[node_metric])
+
+        if edge_metric is not None and edges_diff is not None:
+            if edge_node_stats is None:
+                from modina.diff_net_construction import edge_node_statistics
+                edge_node_stats = edge_node_statistics(edges_diff, edge_metric)
+            ranking_df = ranking_df.merge(edge_node_stats, how='left', left_on='node', right_index=True)
+
     if path is not None:
         ranking_df.to_csv(path, index=False)
 
@@ -153,10 +173,9 @@ def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, persona
 def dimontrank(edges_diff, edge_metric, mode='abs'):
     if mode == 'signed':
         # Check for valid edge metric
-        if edge_metric not in ['diff-P', 'std-int-IS', 'probit-int-IS',
-                               'probit-E', 'probit-PE', 'probit-LS',
-                               'std-E', 'std-PE', 'std-LS']:
-            raise ValueError(f"DimontRank can only be applied with edge metrics 'diff-P', 'std-int-IS', 'probit-int-IS', 'probit-E', 'probit-PE', 'probit-LS', 'std-E', 'std-PE', or 'std-LS'. But '{edge_metric}' was provided.")
+        if edge_metric not in ['diff-P', 'int-IS-E', 'diff-E', 'sum-diff-PE',
+                               'sum-diff-L-PE', 'diff-L-PE', 'diff-L-P']:
+            raise ValueError(f"DimontRank can only be applied with edge metrics 'diff-P', 'int-IS-E', 'diff-E', 'sum-diff-PE', 'sum-diff-L-PE', 'diff-L-PE', or 'diff-L-P'. But '{edge_metric}' was provided.")
         edge_metric = edge_metric + '_signed'
 
     sums = defaultdict(float)

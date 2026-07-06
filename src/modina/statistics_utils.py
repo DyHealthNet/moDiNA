@@ -23,53 +23,30 @@ def cohens_d_to_r(scores1, scores2, n1: int, n2: int):
     return scores1, scores2
 
 
-# Std rescaling (divide raw-E by pooled std per test type)
-def std_rescaling(scores1, scores2=None, metric='std-E'):
-    scores1 = scores1.copy()
-    if metric != 'std-E':
-        raise ValueError(f"Invalid metric '{metric}'. Only 'std-E' is supported.")
-    
-    metric_raw = 'raw-E'
-    scores1[metric] = np.nan
 
-    if scores2 is not None:
-        scores2 = scores2.copy()
-        scores2[metric] = np.nan
-
-    if scores2 is not None and scores1['test_type'].equals(scores2['test_type']):
-        raise ValueError("scores1 and scores2 must have identical 'test_type' columns.")
-
-    for test in np.unique(scores1['test_type']):
-        idx1 = scores1['test_type'] == test
-        v1 = scores1.loc[idx1, metric_raw].to_numpy()
-
-        if scores2 is not None:
-            idx2 = scores2['test_type'] == test
-            v2 = scores2.loc[idx2, metric_raw].to_numpy()
-            values = np.concatenate([v1, v2])
-            std = np.std(values)
-            if std == 0:
-                scores1.loc[idx1, metric] = 0
-                scores2.loc[idx2, metric] = 0
-            else:
-                scores1.loc[idx1, metric] = v1 / std
-                scores2.loc[idx2, metric] = v2 / std
-        else:
-            std = np.std(v1)
-            if std == 0:
-                scores1.loc[idx1, metric] = 0
-            else:
-                scores1.loc[idx1, metric] = v1 / std
-
-    return (scores1, scores2) if scores2 is not None else scores1
-
+# Materialize p-value transforms used by the differential metrics.
+# Computes (idempotently) two columns derived from the adjusted p-value 'raw-P':
+#   log-P = -log10(p)   (significance strength; higher = more significant)
+#   inv-P = 1 - p       (linear significance strength in [0, 1])
+# Zero p-values are floored with an epsilon (min non-zero p / 10) so -log10 is finite;
+# if every p-value is zero, a fixed fallback epsilon is used (avoids min() on an empty array).
+def add_pval_transforms(scores):
+    p = scores['raw-P'].to_numpy(dtype=float)
+    nonzero = p[p > 0]
+    epsilon = nonzero.min() / 10.0 if nonzero.size else 1e-10
+    scores['log-P'] = -np.log10(np.where(p == 0, epsilon, p))
+    scores['inv-P'] = 1.0 - scores['raw-P']
+    return scores
 
 
 # Probit rescaling (rank-based normalization)
-def probit_rescaling(scores1, scores2=None, metric='probit-E'):
+def probit_rescaling(scores1, scores2, metric='rescaled-E'):
     scores1 = scores1.copy()
-    if metric != 'probit-E':
-        raise ValueError(f"Invalid metric '{metric}'. Only 'probit-E' is supported.")
+    scores2 = scores2.copy()
+
+    if metric != 'rescaled-E':
+        raise ValueError(f"Invalid metric '{metric}'. Only 'rescaled-E' is supported.")
+
     metric_raw = 'raw-E'
     scores1[metric] = np.nan
 
@@ -89,14 +66,25 @@ def probit_rescaling(scores1, scores2=None, metric='probit-E'):
             combined = np.concatenate([v1, v2])
             n = len(combined)
 
-            # Folded probit: rank |raw-E| so association strength (not sign) determines rank.
-            signs = np.sign(combined)
-            ranks = stats.rankdata(np.abs(combined))
-            percentiles = 0.5 + ranks / (n + 1) * 0.5
-            probit_magnitude = stats.norm.ppf(percentiles)
-            probit_vals = signs * probit_magnitude
-            scores1.loc[idx1, metric] = probit_vals[:len(v1)]
-            scores2.loc[idx2, metric] = probit_vals[len(v1):]
+        # Folded probit: rank |raw-E| so association strength (not sign) determines rank.
+        # Percentile mapped to (0.5, 1) so norm.ppf gives values in (0, +inf).
+        # Sign is restored afterward, so strong negative associations rank equally to
+        # strong positive ones. For non-negative test types sign=+1 always (no-op).
+        if n == 1:
+            scores1.loc[idx1, metric] = 0.0
+            scores2.loc[idx2, metric] = 0.0
+            continue
+        signs = np.sign(combined)
+        ranks = stats.rankdata(np.abs(combined))
+        # Map rank 1 → percentile 0.5 → probit 0.0; rank n → percentile 0.975 → probit 1.96.
+        # Factor 0.475 gives max = norm.ppf(0.975) = 1.96 (z-score for p=0.05 two-sided).
+        # Formula (rank-1)/(n-1) eliminates n-dependency at both endpoints.
+        percentiles = 0.5 + (ranks - 1) / (n - 1) * 0.475
+        probit_magnitude = stats.norm.ppf(percentiles)
+        probit_vals = signs * probit_magnitude
+
+        scores1.loc[idx1, metric] = probit_vals[:len(v1)]
+        scores2.loc[idx2, metric] = probit_vals[len(v1):]
 
         else:
             n = len(v1)
