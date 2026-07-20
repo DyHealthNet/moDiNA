@@ -122,10 +122,14 @@ Only required when ``data_type = 'simulation'``.
      - ``integer``
      - ``50``
      - Number of categorical nodes to simulate.
-   * - ``simulation.n_samples``
+   * - ``simulation.n_samples_1``
      - ``integer``
      - ``500``
-     - Number of samples (observations) per context.
+     - Number of samples (observations) for the first context.
+   * - ``simulation.n_samples_2``
+     - ``integer``
+     - ``500``
+     - Number of samples (observations) for the second context.
    * - ``simulation.n_shift_cont``
      - ``integer``
      - ``4``

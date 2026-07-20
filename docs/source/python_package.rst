@@ -145,7 +145,7 @@ Parameters:
 
 - ``name1``, ``name2``: Names of the two biological contexts.
 - ``n_cont``, ``n_bi``, ``n_cat``: Number of continuous, binary and ordinal variables per context, respectively.
-- ``n_samples``: Number of samples per context.
+- ``n_samples_1``, ``n_samples_2``: Number of samples for the first and second context, respectively.
 - ``n_shift_*``: Number of variables with an artificial mean shift. Replace ``*`` with the variable type, e.g., ``n_shift_cont``, ``n_shift_bi``, ``n_shift_cat``.
 - ``n_corr_*``: Number of variable pairs with a correlation difference. ``*`` represents the variable type combinations, e.g., ``n_corr_cont_cont``, ``n_corr_bi_cat``, etc.
 - ``n_both_*``: Number of variable pairs with both a mean shift and a correlation difference. ``*`` represents variable type combinations as above.
@@ -176,7 +176,8 @@ Example:
         n_cont=30,
         n_bi=20,
         n_cat=10,
-        n_samples=200,
+        n_samples_1=200,
+        n_samples_2=200,
         n_shift_cont=5,
         n_corr_bi_cat=2,
         n_both_cont_cat=2,

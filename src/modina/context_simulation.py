@@ -8,8 +8,8 @@ import os
 
 # Simulate mixed data using a gaussian copula 
 def simulate_copula(path=None, name1='context1', name2='context2',
-                    n_bi=50, n_cont=50, n_cat=50, n_samples=500, 
-                    n_shift_cont=0, n_shift_bi=0, n_shift_cat=0, 
+                    n_bi=50, n_cont=50, n_cat=50, n_samples_1=500, n_samples_2=500,
+                    n_shift_cont=0, n_shift_bi=0, n_shift_cat=0,
                     n_corr_cont_cont=0, n_corr_bi_bi=0, n_corr_cat_cat=0, n_corr_bi_cont=0, n_corr_bi_cat=0, n_corr_cont_cat=0, 
                     n_both_cont_cont=0, n_both_bi_bi=0, n_both_cat_cat=0, n_both_bi_cont=0, n_both_bi_cat=0, n_both_cont_cat=0,
                     shift=0.5, corr=0.7):
@@ -22,7 +22,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     :param n_bi: Number of binary nodes to simulate.
     :param n_cont: Number of continuous nodes to simulate.
     :param n_cat: Number of categorical nodes to simulate.
-    :param n_samples: Number of samples per context.
+    :param n_samples_1: Number of samples for the first context.
+    :param n_samples_2: Number of samples for the second context.
     :param n_shift_cont: Number of continuous nodes with an artificially introduced mean shift.
     :param n_shift_bi: Number of binary nodes with an artificially introduced mean shift.
     :param n_shift_cat: Number of categorical nodes with an artificially introduced mean shift.
@@ -57,16 +58,16 @@ def simulate_copula(path=None, name1='context1', name2='context2',
 
     # Prepare dataframes
     cont_cols = [f"cont{i+1}" for i in range(n_cont)]
-    context1_cont = pd.DataFrame(np.nan, index=range(n_samples), columns=cont_cols)
-    context2_cont = pd.DataFrame(np.nan, index=range(n_samples), columns=cont_cols)
+    context1_cont = pd.DataFrame(np.nan, index=range(n_samples_1), columns=cont_cols)
+    context2_cont = pd.DataFrame(np.nan, index=range(n_samples_2), columns=cont_cols)
 
     bi_cols = [f"bi{i+1}" for i in range(n_bi)]
-    context1_bi = pd.DataFrame(np.nan, index=range(n_samples), columns=bi_cols)
-    context2_bi = pd.DataFrame(np.nan, index=range(n_samples), columns=bi_cols)
+    context1_bi = pd.DataFrame(np.nan, index=range(n_samples_1), columns=bi_cols)
+    context2_bi = pd.DataFrame(np.nan, index=range(n_samples_2), columns=bi_cols)
 
     cat_cols = [f"ord{i+1}" for i in range(n_cat)]
-    context1_cat = pd.DataFrame(np.nan, index=range(n_samples), columns=cat_cols)
-    context2_cat = pd.DataFrame(np.nan, index=range(n_samples), columns=cat_cols)
+    context1_cat = pd.DataFrame(np.nan, index=range(n_samples_1), columns=cat_cols)
+    context2_cat = pd.DataFrame(np.nan, index=range(n_samples_2), columns=cat_cols)
 
     # Create meta file
     all_cols = cont_cols + bi_cols + cat_cols
@@ -170,8 +171,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                 mean_vector2[nodes.index(node)] = sign * shift
 
     # Gaussian copula
-    u1 = _simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr1, mean_vector=mean_vector1)
-    u2 = _simu_gaussian(n=n_vars, m=n_samples, corr_matrix=corr2, mean_vector=mean_vector2)
+    u1 = _simu_gaussian(n=n_vars, m=n_samples_1, corr_matrix=corr1, mean_vector=mean_vector1)
+    u2 = _simu_gaussian(n=n_vars, m=n_samples_2, corr_matrix=corr2, mean_vector=mean_vector2)
 
     # Transform to marginal distributions using the inverse CDF
     for i, node in enumerate(nodes):
