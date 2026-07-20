@@ -140,23 +140,22 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         node_pair, corr1, corr2, _, normal_nodes_cont, normal_nodes_cat = _set_corr(nodes=nodes, corr_param=corr, corr_matrix1=corr1, corr_matrix2=corr2, normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
         shift_corr_nodes.append(node_pair)
 
-    # Randomly select nodes for mean shifts
+    # Select nodes for mean shifts. Selection is deterministic (first available node in order),
+    # so repeated simulations with the same settings always tweak exactly the same variables.
+    # Nodes are drawn from the front of each type pool, after correlation pairs above consumed theirs.
     for _ in range(n_shift_cont):
         assert normal_nodes_cont, 'Introducing correlations was unsuccessful.'
-        node = random.choice(normal_nodes_cont)
-        normal_nodes_cont.remove(node)
+        node = normal_nodes_cont.pop(0)
         shift_nodes.append(node)
 
     for _ in range(n_shift_bi):
         assert normal_nodes_bi, 'Introducing correlations was unsuccessful.'
-        node = random.choice(normal_nodes_bi)
-        normal_nodes_bi.remove(node)
+        node = normal_nodes_bi.pop(0)
         shift_nodes.append(node)
 
     for _ in range(n_shift_cat):
         assert normal_nodes_cat, 'Introducing correlations was unsuccessful.'
-        node = random.choice(normal_nodes_cat)
-        normal_nodes_cat.remove(node)
+        node = normal_nodes_cat.pop(0)
         shift_nodes.append(node)
 
     mean_vector1 = np.zeros(n_vars)
@@ -221,42 +220,32 @@ def simulate_copula(path=None, name1='context1', name2='context2',
 
 # Helper function to set correlation in copula-based simulation
 def _set_corr(nodes, corr_param, corr_matrix1, corr_matrix2, normal_nodes_bi=None, normal_nodes_cont=None, normal_nodes_cat=None):
+    # Node selection is deterministic (first available node in order) so that repeated simulations
+    # with the same settings always introduce the correlation on exactly the same variable pairs.
     if normal_nodes_bi is not None and normal_nodes_cont is not None and normal_nodes_cat is None:
-        node1 = random.choice(normal_nodes_cont)
-        normal_nodes_cont.remove(node1)
-        node2 = random.choice(normal_nodes_bi)
-        normal_nodes_bi.remove(node2)
+        node1 = normal_nodes_cont.pop(0)
+        node2 = normal_nodes_bi.pop(0)
 
     elif normal_nodes_bi is not None and normal_nodes_cat is not None and normal_nodes_cont is None:
-        node1 = random.choice(normal_nodes_bi)
-        normal_nodes_bi.remove(node1)
-        node2 = random.choice(normal_nodes_cat)
-        normal_nodes_cat.remove(node2)
+        node1 = normal_nodes_bi.pop(0)
+        node2 = normal_nodes_cat.pop(0)
 
     elif normal_nodes_cont is not None and normal_nodes_cat is not None and normal_nodes_bi is None:
-        node1 = random.choice(normal_nodes_cont)
-        normal_nodes_cont.remove(node1)
-        node2 = random.choice(normal_nodes_cat)
-        normal_nodes_cat.remove(node2)
+        node1 = normal_nodes_cont.pop(0)
+        node2 = normal_nodes_cat.pop(0)
 
     elif normal_nodes_bi is not None and normal_nodes_cont is None and normal_nodes_cat is None:
-        node1 = random.choice(normal_nodes_bi)
-        normal_nodes_bi.remove(node1)
-        node2 = random.choice(normal_nodes_bi)
-        normal_nodes_bi.remove(node2)
-    
+        node1 = normal_nodes_bi.pop(0)
+        node2 = normal_nodes_bi.pop(0)
+
     elif normal_nodes_cont is not None and normal_nodes_bi is None and normal_nodes_cat is None:
-        node1 = random.choice(normal_nodes_cont)
-        normal_nodes_cont.remove(node1)
-        node2 = random.choice(normal_nodes_cont)
-        normal_nodes_cont.remove(node2)
+        node1 = normal_nodes_cont.pop(0)
+        node2 = normal_nodes_cont.pop(0)
 
     elif normal_nodes_cat is not None and normal_nodes_bi is None and normal_nodes_cont is None:
-        node1 = random.choice(normal_nodes_cat)
-        normal_nodes_cat.remove(node1)
-        node2 = random.choice(normal_nodes_cat)
-        normal_nodes_cat.remove(node2)
-    
+        node1 = normal_nodes_cat.pop(0)
+        node2 = normal_nodes_cat.pop(0)
+
     else:
         raise ValueError('At least one of normal_nodes_bi, normal_nodes_cont, or normal_nodes_cat must be provided.')
 

@@ -1,6 +1,6 @@
 # Adapted from https://github.com/DyHealthNet/DHN-backend.git
 
-from modina.statistics_utils import _df_to_numpy, _separate_types, add_pval_transforms
+from modina.statistics_utils import _df_to_numpy, _separate_types, add_pval_transforms, fdr_correction
 
 import os
 import numpy as np
@@ -58,17 +58,13 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
                             cont_cont_results, bi_ord_results, ord_nom_results)
     logging.info("Finished combining scores from different tests.")
 
-    # Take the adjusted p-value and the corresponding effect size
+    # Take the unadjusted p-value and the corresponding effect size for each association.
+    # napy corrects for multiple testing per test-call; instead we select the raw p-value here
+    # and apply a single FDR correction across all edges together (see below).
     column_names = scores.iloc[:, 2:].columns
-    if correction == 'bh':
-        correction = 'benjamini_hb'
-    elif correction == 'by':
-        correction = 'benjamini_yek'
-    else:
-        raise ValueError(f"Invalid correction method '{correction}'. Choose from: 'bh' or 'yek'.")
 
-    p_adj = '_p_' + correction
-    p_columns = [column for column in column_names if p_adj in column]
+    p_unadj = '_p_unadjusted'
+    p_columns = [column for column in column_names if p_unadj in column]
     e_columns = [column for column in column_names if '_e_' in column]
 
     scores_final = scores[['label1', 'label2']].copy()
@@ -106,7 +102,14 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
 
     scores_final = scores_final.drop_duplicates(subset=['label1', 'label2', 'test_type'], keep='first')
     logging.info("Finished selecting raw p-values and effect sizes for each association.")
-    
+
+    # Single multiple-testing correction across ALL edges (all test types pooled into one FDR
+    # family), rather than napy's per-test-call correction. Applied on the deduplicated edges so
+    # each association is counted exactly once. Untested pairs stay NaN and are excluded; dummy
+    # associations (added later with p=1.0) are likewise not part of this family.
+    scores_final['raw-P'] = fdr_correction(scores_final['raw-P'].to_numpy(), method=correction)
+    logging.info("Finished single multiple-testing correction across all edges.")
+
     return scores_final
 
 
@@ -232,7 +235,8 @@ def napy_bi_nom(nom_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_w
     if discrete_phenotypes.shape[1] < 2:
         return [None]
 
-    output = napy.chi_squared(discrete_phenotypes, axis=1, threads=num_workers, nan_value=nan_value, use_numba=False)
+    output = napy.chi_squared(discrete_phenotypes, axis=1, threads=num_workers, nan_value=nan_value, use_numba=False,
+                              return_types=['p_unadjusted', TEST_EFFECT_SIZES['chi2']])
     results = _napy_formatting(output, [cols], 'chi2')
     assert results is not None, "Results should not be None here."
 
@@ -251,12 +255,14 @@ def napy_nom_cont(cont_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, t
 
     if test == 'parametric':
         result = napy.anova(cat_data=nom_phenotypes, cont_data=cont_phenotypes, axis=1,
-                                      threads=num_workers, nan_value=nan_value)
+                                      threads=num_workers, nan_value=nan_value,
+                                      return_types=['p_unadjusted', TEST_EFFECT_SIZES['anova']])
         done_test = "anova"
 
     elif test == 'nonparametric':
         result = napy.kruskal_wallis(cat_data=nom_phenotypes, cont_data=cont_phenotypes, axis=1,
-                                               threads=num_workers, nan_value=nan_value)
+                                               threads=num_workers, nan_value=nan_value,
+                                               return_types=['p_unadjusted', TEST_EFFECT_SIZES['kruskal']])
         done_test = "kruskal"
 
     else:
@@ -273,7 +279,8 @@ def napy_ord_nom(ord_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, num
     nom_phenotypes, nom_cols = _df_to_numpy(nom_phenotypes)
 
     result = napy.kruskal_wallis(cat_data=nom_phenotypes, cont_data=ord_phenotypes, axis=1,
-                                            threads=num_workers, nan_value=nan_value)
+                                            threads=num_workers, nan_value=nan_value,
+                                            return_types=['p_unadjusted', TEST_EFFECT_SIZES['kruskal']])
     done_test = "kruskal"
 
     return [_napy_formatting(result, [nom_cols, ord_cols], done_test)]
@@ -291,12 +298,13 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
 
     if test == 'parametric':
         result = napy.ttest(bin_data=bi_phenotypes_two, cont_data=cont_phenotypes, axis=1,
-                                     threads=num_workers, nan_value=nan_value)
+                                     threads=num_workers, nan_value=nan_value,
+                                     return_types=['p_unadjusted', TEST_EFFECT_SIZES['ttest']])
         done_test = "ttest"
 
     elif test == 'nonparametric':
         result = napy.mwu(bin_data=bi_phenotypes_two, cont_data=cont_phenotypes, axis=1, threads=num_workers,
-                                   nan_value=nan_value)
+                                   nan_value=nan_value, return_types=['p_unadjusted', TEST_EFFECT_SIZES['mwu']])
         done_test = "mwu"
 
     else:
@@ -315,7 +323,7 @@ def napy_bi_ord(ord_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_w
     bi_phenotypes_two, bi_cols = _df_to_numpy(bi_phenotypes)
 
     result = napy.mwu(bin_data=bi_phenotypes_two, cont_data=ord_phenotypes, axis=1, threads=num_workers,
-                                nan_value=nan_value)
+                                nan_value=nan_value, return_types=['p_unadjusted', TEST_EFFECT_SIZES['mwu']])
     done_test = "mwu"
 
     results = [_napy_formatting(result, [bi_cols, ord_cols], done_test)]
@@ -333,12 +341,12 @@ def napy_cont_cont(cont_phenotypes: pd.DataFrame, test: str='nonparametric', num
 
     if test == 'parametric':
         result = napy.pearsonr(cont_phenotypes, nan_value=nan_value, threads=num_workers,
-                                    axis=1)
+                                    axis=1, return_types=['p_unadjusted', TEST_EFFECT_SIZES['pearson']])
         done_test = "pearson"
 
     elif test == 'nonparametric':
         result = napy.spearmanr(cont_phenotypes, threads=num_workers, nan_value=nan_value,
-                                     axis=1)
+                                     axis=1, return_types=['p_unadjusted', TEST_EFFECT_SIZES['spearman']])
         done_test = "spearman"
 
     else:
@@ -357,7 +365,8 @@ def napy_ord_cont(cont_phenotypes: pd.DataFrame, ord_phenotypes: pd.DataFrame, n
     cont_phenotypes, cont_cols = _df_to_numpy(cont_phenotypes)
     ord_phenotypes, ord_cols = _df_to_numpy(ord_phenotypes)
 
-    result = napy.spearmanr(combined_phenotypes, threads=num_workers, nan_value=nan_value, axis=1)
+    result = napy.spearmanr(combined_phenotypes, threads=num_workers, nan_value=nan_value, axis=1,
+                            return_types=['p_unadjusted', TEST_EFFECT_SIZES['spearman']])
     done_test = "spearman"
 
     return [_napy_formatting(result, [combined_cols], done_test, ord_cols=ord_cols.tolist(), cont_cols=cont_cols.tolist())]

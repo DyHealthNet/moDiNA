@@ -1,4 +1,4 @@
-from modina.statistics_utils import probit_rescaling, _df_to_numpy, _separate_types, add_pval_transforms
+from modina.statistics_utils import probit_rescaling, _df_to_numpy, _separate_types, add_pval_transforms, fdr_correction
 from modina.context_net_inference import _order_categories
 
 import os
@@ -324,13 +324,9 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
 
     assert nom1.columns.equals(nom2.columns) and ord1.columns.equals(ord2.columns) and cont1.columns.equals(cont2.columns) and bi1.columns.equals(bi2.columns), 'Context a and b need to have the same structure.'
 
-    # Determine the return type for p-values based on the correction method
-    if correction == 'bh':
-        return_p = 'p_benjamini_hb'
-    elif correction == 'by':
-        return_p = 'p_benjamini_yek'
-    else:
-        raise ValueError(f"Invalid correction method '{correction}'. Choose from: 'bh' or 'yek'.")
+    # Request the unadjusted p-value from napy; a single FDR correction across all nodes (all
+    # data types pooled into one family) is applied below, rather than napy's per-type correction.
+    return_p = 'p_unadjusted'
 
     # nominal
     if nom1.shape[1] > 0:
@@ -382,24 +378,12 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
         
         p_cont = dict(zip(colnames, result[0].tolist()))
 
-    # STC = 1 - p-value
-    if p_ord:
-        pvals = pd.Series(p_ord)
-        nodes_diff.loc[pvals.index, 'test_p'] = pvals
-        nodes_diff.loc[pvals.index, 'STC'] = 1 - pvals
-
-    if p_nom:
-        pvals = pd.Series(p_nom)
-        nodes_diff.loc[pvals.index, 'test_p'] = pvals
-        nodes_diff.loc[pvals.index, 'STC'] = 1 - pvals
-
-    if p_bi:
-        pvals = pd.Series(p_bi)
-        nodes_diff.loc[pvals.index, 'test_p'] = pvals
-        nodes_diff.loc[pvals.index, 'STC'] = 1 - pvals
-
-    if p_cont:
-        pvals = pd.Series(p_cont)
+    # Pool the unadjusted p-values from all data types into one family and apply a single
+    # multiple-testing correction across all tested nodes. STC = 1 - adjusted p-value.
+    # Nodes without a test keep the default test_p=1.0, STC=0.0 and are excluded from the family.
+    pvals = pd.Series({**p_ord, **p_nom, **p_bi, **p_cont})
+    if not pvals.empty:
+        pvals[:] = fdr_correction(pvals.to_numpy(), method=correction)
         nodes_diff.loc[pvals.index, 'test_p'] = pvals
         nodes_diff.loc[pvals.index, 'STC'] = 1 - pvals
 

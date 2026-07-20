@@ -24,6 +24,22 @@ def cohens_d_to_r(scores1, scores2, n1: int, n2: int):
 
 
 
+# Single multiple-testing correction across a flat family of p-values.
+# Applies one Benjamini-Hochberg ('bh') or Benjamini-Yekutieli ('by') FDR pass over all
+# supplied p-values at once (as opposed to napy's per-test-call correction). NaN entries are
+# untested pairs/nodes and are excluded from the correction family (kept as NaN in the output),
+# so they do not inflate the FDR denominator.
+def fdr_correction(pvalues, method='bh'):
+    if method not in ('bh', 'by'):
+        raise ValueError(f"Invalid correction method '{method}'. Choose from: 'bh' or 'by'.")
+    p = np.asarray(pvalues, dtype=float)
+    valid = ~np.isnan(p)
+    out = p.copy()
+    if valid.any():
+        out[valid] = np.clip(stats.false_discovery_control(p[valid], method=method), 0.0, 1.0)
+    return out
+
+
 # Materialize p-value transforms used by the differential metrics.
 # Computes (idempotently) two columns derived from the adjusted p-value 'raw-P':
 #   log-P = -log10(p)   (significance strength; higher = more significant)
