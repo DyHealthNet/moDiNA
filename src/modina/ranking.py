@@ -16,12 +16,11 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
 
     For the node-indexed rankings ('PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'nodeRank') the
     output is additionally enriched with the node-metric value (when a node metric was employed) and with
-    per-node statistics over the incident edges (when an edge metric was employed). The 'edgeRank' output is
-    edge-indexed and left unchanged.
+    per-node statistics over the incident edges (when an edge metric was employed).
 
     :param nodes_diff: Differential node scores.
     :param edges_diff: Differential edge scores.
-    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'nodeRank' and 'edgeRank'.
+    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank' and 'nodeRank'.
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
     :param path: Optional path to save the ranking as a CSV file.
     :param edge_node_stats: Optional precomputed per-node edge statistics (see edge_node_statistics). If not
@@ -74,27 +73,12 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
         if nodes_diff is None:
             raise ValueError("To compute 'nodeRank', please provide 'nodes_diff'.")
 
-    elif ranking_alg == 'edgeRank':
-        if edges_diff is None or edge_metric is None:
-            raise ValueError("To compute 'edgeRank', please provide 'edges_diff'.")
-
     else:
         raise ValueError(f"Invalid ranking algorithm {ranking_alg}. "
-                         "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'nodeRank' or 'edgeRank'.")
+                         "Choose from: 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank' or 'nodeRank'.")
 
     # Construct ranking dataframe
-    if ranking_alg == 'edgeRank':
-        assert type(edge_metric) == str, "edge_metric must be a string."
-        assert edges_diff is not None, "edges_diff must be provided for edgeRank."
-
-        ranking_df = edges_diff[['label1', 'label2', edge_metric]].copy()   
-        ranking_df['edge'] = ranking_df.apply(lambda row: '_'.join(sorted([row['label1'], row['label2']])), axis=1)
-        ranking_df = ranking_df[['edge', edge_metric]].rename(columns={edge_metric: 'score'})
-        ranking_df = ranking_df.sort_values('score', ascending=False).reset_index(drop=True)
-        ranking_df['rank'] = ranking_df['score'].rank(method='min', ascending=False).astype(int)
-        ranking_df = ranking_df[['edge', 'rank', 'score']]
-    
-    elif ranking_alg == 'nodeRank':
+    if ranking_alg == 'nodeRank':
         assert type(node_metric) == str, "node_metric must be a string."
         assert nodes_diff is not None, "nodes_diff must be provided for nodeRank."
 
@@ -122,17 +106,15 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
             meta_file = meta_file.set_index('label')
             ranking_df['type'] = ranking_df['node'].map(meta_file['type'])
 
-    # Enrich node-indexed rankings with the node-metric value and per-node edge statistics.
-    # The edgeRank output is edge-indexed and is left unchanged.
-    if ranking_alg != 'edgeRank':
-        if node_metric is not None and nodes_diff is not None:
-            ranking_df[node_metric] = ranking_df['node'].map(nodes_diff[node_metric])
+    # Enrich the node-indexed ranking with the node-metric value and per-node edge statistics.
+    if node_metric is not None and nodes_diff is not None:
+        ranking_df[node_metric] = ranking_df['node'].map(nodes_diff[node_metric])
 
-        if edge_metric is not None and edges_diff is not None:
-            if edge_node_stats is None:
-                from modina.diff_net_construction import edge_node_statistics
-                edge_node_stats = edge_node_statistics(edges_diff, edge_metric)
-            ranking_df = ranking_df.merge(edge_node_stats, how='left', left_on='node', right_index=True)
+    if edge_metric is not None and edges_diff is not None:
+        if edge_node_stats is None:
+            from modina.diff_net_construction import edge_node_statistics
+            edge_node_stats = edge_node_statistics(edges_diff, edge_metric)
+        ranking_df = ranking_df.merge(edge_node_stats, how='left', left_on='node', right_index=True)
 
     if path is not None:
         ranking_df.to_csv(path, index=False)

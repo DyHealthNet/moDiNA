@@ -34,7 +34,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param edge_metric: Edge metric used to construct the differential network.
     :param node_metric: Node metric used to construct the differential network.
     :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
-    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank', 'nodeRank' and 'edgeRank'. Defaults to 'PageRank+'.
+    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'absDimontRank', 'DimontRank' and 'nodeRank'. Defaults to 'PageRank+'.
     :param name1: Name of Context 1. Used for saving files. Defaults to 'context1'.
     :param name2: Name of Context 2. Used for saving files. Defaults to 'context2'.
     :param project_path: Optional path to save results. Defaults to None.

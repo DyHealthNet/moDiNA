@@ -578,20 +578,20 @@ Parameters:
 
 - ``nodes_diff``: pandas DataFrame containing differential node scores.
 - ``edges_diff``: pandas DataFrame containing differential edge scores.
-- ``ranking_alg``: Ranking algorithm to compute. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'``, ``'direct_node'`` and ``'direct_edge'``.
+- ``ranking_alg``: Ranking algorithm to compute. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'`` and ``'nodeRank'``.
 - ``meta_file``: Optional pandas DataFrame specifying node metadata (columns ``label`` and ``type``), used to generate type-specific rankings.
 - ``path``: Optional file path to save the resulting ranking as a CSV file.
 - ``edge_node_stats``: Optional precomputed per-node edge statistics (as returned by ``compute_diff_edges`` / ``compute_diff_network``). If omitted but an edge metric was employed, the statistics are computed on the fly.
 
 .. note::
 
-   For the node-indexed rankings the output is additionally enriched with the node-metric value (when a node metric was employed) and with per-node edge statistics ``edge-min``, ``edge-max``, ``edge-median``, ``edge-mean``, ``edge-sd`` over the absolute edge metric, plus ``edge-percentile-mean`` (the mean percentile rank of a node's edges within the global distribution of all edges) when an edge metric was employed. The ``edgeRank`` output is edge-indexed and left unchanged.
+   For the node-indexed rankings the output is additionally enriched with the node-metric value (when a node metric was employed) and with per-node edge statistics ``edge-min``, ``edge-max``, ``edge-median``, ``edge-mean``, ``edge-sd`` over the absolute edge metric, plus ``edge-percentile-mean`` (the mean percentile rank of a node's edges within the global distribution of all edges) when an edge metric was employed.
 
 Returns:
 
 A tuple ``(ranks, rank_dict)``:
 
-- ``ranks``: List containing the ranked nodes (or edges for ``direct_edge``), sorted in descending order.
+- ``ranks``: List containing the ranked nodes, sorted in descending order.
 - ``rank_dict``: Dictionary containing rankings per data type:
 
   - ``'cont'``: Continuous variables  
