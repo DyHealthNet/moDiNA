@@ -495,7 +495,7 @@ def _simu_gaussian(n: int, m: int, corr_matrix: np.ndarray, mean_vector: Optiona
 
 
 # Save ground truth nodes to file
-def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=None):
+def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=None, node_shift_magnitude=None):
     """
     Write ground truth nodes or edges to a two- (or, with the optional data below, wider-) column file.
 
@@ -512,6 +512,12 @@ def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=Non
                        sum_jittered_magnitude). When given, two extra columns are appended; a node
                        absent from the dict (e.g. mean-shift-only) is written as (0, 0.0). Omit to
                        reproduce the historical two-column file exactly.
+    :param node_shift_magnitude: Optional, mode='node' only. Dict node -> mean-shift magnitude
+                                 injected on that node (e.g. `simulate_copula_mixed`'s
+                                 `effects['node_shift_magnitude']`). When given, an extra
+                                 `shift_magnitude` column is appended; a node with no mean-shift
+                                 draw of its own (e.g. correlation-only) is written as 0.0. Omit to
+                                 reproduce the file exactly as it was before this column existed.
     """
     shift = groundtruths[0]
     corr = groundtruths[1]
@@ -522,6 +528,8 @@ def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=Non
             header = 'node, description'
             if node_stats is not None:
                 header += ', n_edges_tweaked, sum_jittered_magnitude'
+            if node_shift_magnitude is not None:
+                header += ', shift_magnitude'
             f.write(header + '\n')
 
             def _write_node(node, description):
@@ -529,6 +537,8 @@ def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=Non
                 if node_stats is not None:
                     n_edges, sum_magnitude = node_stats.get(node, (0, 0.0))
                     line += f', {n_edges}, {sum_magnitude}'
+                if node_shift_magnitude is not None:
+                    line += f', {node_shift_magnitude.get(node, 0.0)}'
                 f.write(line + '\n')
 
             for node in shift:
