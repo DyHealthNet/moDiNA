@@ -1,4 +1,4 @@
-from modina.statistics_utils import probit_rescaling
+from modina.statistics_utils import probit_rescaling, reconcile_flagged_variables
 
 import logging
 import math
@@ -72,6 +72,10 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     :param path: Optional path to save the filtered scores and context data as CSV files. Defaults to None.
     :return: A tuple containing the filtered scores and context data.
     """
+
+    # Remove variables flagged (single observed category, or entirely missing) in only one of
+    # the two contexts before relying on scores1/scores2 being row-aligned.
+    scores1, scores2, context1, context2, removed_variables = reconcile_flagged_variables(scores1, scores2, context1, context2, path=path)
 
     if not scores1['label1'].equals(scores2['label1']) and not scores1['label2'].equals(scores2['label2']):
         raise ValueError('scores1 and scores2 need to have the same structure and order of edges.')
@@ -166,6 +170,11 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
         scores2_filtered.to_csv(os.path.join(path, 'scores2_filtered.csv'), index=False)
         context1_filtered.to_csv(os.path.join(path, 'context1_filtered.csv'), index=False)
         context2_filtered.to_csv(os.path.join(path, 'context2_filtered.csv'), index=False)
+
+    # Always attach the (possibly empty) removed-variables list, so a direct Python caller can
+    # inspect it via scores1_filtered.attrs['removed_variables'] even without passing 'path'.
+    scores1_filtered.attrs['removed_variables'] = removed_variables
+    scores2_filtered.attrs['removed_variables'] = removed_variables
 
     return scores1_filtered, scores2_filtered, context1_filtered, context2_filtered
 

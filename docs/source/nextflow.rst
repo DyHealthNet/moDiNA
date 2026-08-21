@@ -249,7 +249,7 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
    * - ``diff_net_analysis.edge_metric``
      - ``string``
      - ``'diff-E'``
-     - Edge-level differential metric. Used when ``run_type = 'single'``. One of: ``diff-P``, ``diff-E``, ``diff-L-P`` (difference of -log10(p-values) between contexts), ``diff-L-PE`` (difference of -log10(p) × rescaled effect size), ``sum-diff-PE``, ``sum-diff-L-PE``, ``None``.
+     - Edge-level differential metric. Used when ``run_type = 'single'``. One of: ``diff-P``, ``diff-E``, ``diff-T-E`` (difference of r²-transformed effect sizes, an absolute-scale alternative to ``diff-E``'s rank-based rescaling), ``diff-L-P`` (difference of -log10(p-values) between contexts), ``diff-L-PE`` (difference of -log10(p) × rescaled effect size), ``sum-diff-PE``, ``sum-diff-L-PE``, ``None``.
    * - ``diff_net_analysis.ranking_algorithm``
      - ``string``
      - ``'PageRank+'``

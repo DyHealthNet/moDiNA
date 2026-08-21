@@ -155,9 +155,9 @@ def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, persona
 def dimontrank(edges_diff, edge_metric, mode='abs'):
     if mode == 'signed':
         # Check for valid edge metric
-        if edge_metric not in ['diff-P', 'int-IS-E', 'diff-E', 'sum-diff-PE',
+        if edge_metric not in ['diff-P', 'int-IS-E', 'diff-E', 'diff-T-E', 'sum-diff-PE',
                                'sum-diff-L-PE', 'diff-L-PE', 'diff-L-P']:
-            raise ValueError(f"DimontRank can only be applied with edge metrics 'diff-P', 'int-IS-E', 'diff-E', 'sum-diff-PE', 'sum-diff-L-PE', 'diff-L-PE', or 'diff-L-P'. But '{edge_metric}' was provided.")
+            raise ValueError(f"DimontRank can only be applied with edge metrics 'diff-P', 'int-IS-E', 'diff-E', 'diff-T-E', 'sum-diff-PE', 'sum-diff-L-PE', 'diff-L-PE', or 'diff-L-P'. But '{edge_metric}' was provided.")
         edge_metric = edge_metric + '_signed'
 
     sums = defaultdict(float)

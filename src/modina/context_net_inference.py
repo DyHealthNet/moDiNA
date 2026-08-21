@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import napypi as napy
 import logging
-import itertools
 from typing import Optional, Tuple
 
 # Single effect size kept per statistical test (napypi output key).
@@ -137,14 +136,15 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     # Separate the data into categorical and continuous data
     ord, nom, cont, bi = _separate_types(context, meta_file)
 
-    # Handle categorical variables with only one category by adding dummy rows with p-value 1.0 and effect size 0.0
-    ord, nom, bi, cont, dummy = _create_dummy_associations(ord=ord, nom=nom, bi=bi, cont=cont, meta_file=meta_file, test_type=test_type, nan_value=nan_value)
+    # Flag and drop categorical (or continuous) variables that have only one observed category
+    # in this context; they carry no real signal and would otherwise force every downstream
+    # association to be reported as a spurious "perfect non-association" (p=1.0, e=0.0).
+    ord, nom, bi, cont, flagged_vars = _drop_single_category_variables(ord=ord, nom=nom, bi=bi, cont=cont, nan_value=nan_value)
 
     # Calculate scores
     scores = calculate_association_scores(ord_data=ord, nom_data=nom, cont_data=cont, bi_data=bi,
                                           test_type=test_type, num_workers=num_workers, nan_value=nan_value,
                                           correction=correction)
-    scores = pd.concat([scores, dummy], ignore_index=True)
 
     # Convert Cohen's d -> point-biserial r for ttest edges using actual binary group sizes.
     # label1 is the binary variable at this point (before the min/max label sort below).
@@ -174,56 +174,51 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     
     logging.info("Finished calculating association scores and sorting.")
 
-    # Replace NaN values in p-values with 1.0 and in effect sizes with 0.0; assign correct test type
-    if test_type == 'parametric':
-        map = {
-            ('continuous', 'continuous'): 'pearson',
-            ('continuous', 'nominal'): 'anova',
-            ('continuous', 'ordinal'): 'spearman',
-            ('binary', 'continuous'): 'ttest',
-            ('binary', 'binary'): 'chi2',
-            ('binary', 'nominal'): 'chi2',
-            ('binary', 'ordinal'): 'mwu',
-            ('ordinal', 'ordinal'): 'spearman',
-            ('nominal', 'ordinal'): 'kruskal',
-            ('nominal', 'nominal'): 'chi2'
-        }
-    elif test_type == 'nonparametric':
-        map = {
-            ('continuous', 'continuous'): 'spearman',
-            ('continuous', 'nominal'): 'kruskal',
-            ('continuous', 'ordinal'): 'spearman',
-            ('binary', 'continuous'): 'mwu',
-            ('binary', 'binary'): 'chi2',
-            ('binary', 'nominal'): 'chi2',
-            ('binary', 'ordinal'): 'mwu',
-            ('ordinal', 'ordinal'): 'spearman',
-            ('nominal', 'ordinal'): 'kruskal',
-            ('nominal', 'nominal'): 'chi2'
-        }
-    else:
-        raise ValueError(f"Invalid test type '{test_type}'. Specify 'parametric' or 'nonparametric' for association testing.")
+    # Drop rows where NApy could not compute the test at all (raw-P NaN) or returned a NaN
+    # effect size for it (raw-E NaN) -- e.g. insufficient non-missing overlap for that specific
+    # pair, or a degenerate group split (near-empty category) that blows up the effect-size
+    # formula even though a (meaningless) p-value still came out. These are NOT genuinely tested
+    # "no association" results, so they are dropped from this context's network entirely rather
+    # than filled with sentinel p=1.0/e=0.0 -- which would make them indistinguishable from a
+    # real weak/null association downstream. 'test_type' is only ever missing when raw-P is NaN
+    # (both driven by the same has_valid check in calculate_association_scores), so any row that
+    # survives this drop already has a real, non-null test_type -- no fallback assignment needed.
+    scores_na_mask = scores['raw-P'].isna() | scores['raw-E'].isna()
+    scores_na = scores.loc[scores_na_mask, ['label1', 'label2', 'test_type']].copy()
+    scores = scores.loc[~scores_na_mask].reset_index(drop=True)
 
-    meta = meta_file.set_index('label')['type'].to_dict()
-    for col in scores.columns:
-        if col == 'raw-E':
-            scores[col] = scores[col].fillna(0.0)
-        elif col == 'raw-P':
-            scores[col] = scores[col].fillna(1.0)
-        elif col == 'test_type':
-            scores[col] = scores[col].fillna(scores.apply(lambda row: map.get(tuple(sorted((meta[row['label1']], meta[row['label2']]))), 'unknown'), axis=1))
-    
-    logging.info("Finished handling NaN values and assigning test types.")
+    logging.info(f"Dropped {len(scores_na)} pair(s) where NApy could not compute a valid test result.")
 
     # Precompute p-value transforms (log-P = -log10(p), inv-P = 1 - p) used by the
-    # differential edge/node metrics. Computed here, after 'raw-P' is finalized (dummy and
-    # missing associations are 1.0), so derived columns are consistent for every row.
+    # differential edge/node metrics. Safe now that every remaining row has a real 'raw-P'.
     scores = add_pval_transforms(scores)
+
+    # Attach both diagnostics to the returned DataFrame so same-process callers (e.g. the
+    # Nextflow pipeline's context_network_inference.py, which writes its own output files under
+    # --output_prefix rather than using the 'path' argument below) can access them without
+    # needing a second, separate computation. scores_na is stored as plain records (not a
+    # DataFrame) -- pandas compares '.attrs' dicts for equality in some internal operations
+    # (e.g. concat/merge via __finalize__), and a DataFrame value there raises "truth value of a
+    # DataFrame is ambiguous" the moment two such attrs dicts are compared.
+    scores.attrs['flagged_variables'] = flagged_vars
+    scores.attrs['scores_na'] = scores_na.to_dict('records')
 
     # Save scores
     if path is not None:
         file = os.path.join(path, f"{name}_scores.csv")
         scores.to_csv(file, index=False)
+
+        # Save the variables flagged (and excluded) in this context, and the specific pairs
+        # dropped because NApy returned a NaN raw-P/raw-E for them (see above) -- both already
+        # excluded from 'scores' entirely, not filled with sentinel values. Always written (even
+        # if empty), so consumers don't need to special-case a missing file. The
+        # differential-network step reconciles both kinds of gaps against the other context (see
+        # statistics_utils.reconcile_flagged_variables).
+        flagged_file = os.path.join(path, f"{name}_flagged_variables.csv")
+        pd.DataFrame({'label': flagged_vars}).to_csv(flagged_file, index=False)
+
+        scores_na_file = os.path.join(path, f"{name}_scores_na.csv")
+        scores_na.to_csv(scores_na_file, index=False)
 
     return scores
 
@@ -462,8 +457,20 @@ def _combine_tests(*result_groups) -> pd.DataFrame:
     return out
 
 
-def _create_dummy_associations(ord, nom, bi, cont, meta_file, test_type, nan_value):
-    all_data = pd.concat([ord, nom, bi, cont], axis=1)
+def _drop_single_category_variables(ord, nom, bi, cont, nan_value):
+    """
+    Find and drop variables that have only one observed category/value (excluding NaN) in
+    this context. Such variables carry no real signal for association testing, so they are
+    excluded from this context's network entirely (no edges are computed for them) rather
+    than being given fabricated "no association" scores.
+
+    Note: a variable dropped here may still be a perfectly valid variable in the *other*
+    context. It is the differential-network step's responsibility to also remove it from
+    that other context, so both contexts' networks stay aligned on the same node set
+    (see statistics_utils.reconcile_flagged_variables).
+
+    :return: The (possibly reduced) ord, nom, bi, cont DataFrames, plus the list of dropped variables.
+    """
     const_vars = []
 
     # Find all variables that have only one observed category/value (excluding NaN)
@@ -471,67 +478,19 @@ def _create_dummy_associations(ord, nom, bi, cont, meta_file, test_type, nan_val
         for col in df.columns:
             if df[col][df[col] != nan_value].nunique() <= 1:
                 const_vars.append(col)
-    
+
     if const_vars:
-        logging.warning(f'The following variables have only one observed value/category or entirely missing values in one of the contexts: {const_vars}. For these variables, all related association scores in that context will be set to p-value 1.0 and effect size 0.0.')
+        logging.warning(f'The following variables have only one observed value/category or entirely missing values '
+                        f'in this context: {const_vars}. They will be excluded from this context\'s network '
+                        f'(no association scores are computed for them). They must also be excluded from the '
+                        f'other context\'s network before differential analysis.')
 
         ord = ord.drop(columns=const_vars, errors='ignore')
         nom = nom.drop(columns=const_vars, errors='ignore')
         bi = bi.drop(columns=const_vars, errors='ignore')
         cont = cont.drop(columns=const_vars, errors='ignore')
-    
-        other_vars = all_data.columns.difference(const_vars)
-        
-        meta = meta_file.set_index('label')['type'].to_dict()
 
-        if test_type == 'parametric':
-            map = {
-                ('continuous', 'continuous'): 'pearson',
-                ('continuous', 'nominal'): 'anova',
-                ('continuous', 'ordinal'): 'spearman',
-                ('binary', 'continuous'): 'ttest',
-                ('binary', 'binary'): 'chi2',
-                ('binary', 'nominal'): 'chi2',
-                ('binary', 'ordinal'): 'mwu',
-                ('ordinal', 'ordinal'): 'spearman',
-                ('nominal', 'ordinal'): 'kruskal',
-                ('nominal', 'nominal'): 'chi2'
-            }
-        elif test_type == 'nonparametric':
-            map = {
-                ('continuous', 'continuous'): 'spearman',
-                ('continuous', 'nominal'): 'kruskal',
-                ('continuous', 'ordinal'): 'spearman',
-                ('binary', 'continuous'): 'mwu',
-                ('binary', 'binary'): 'chi2',
-                ('binary', 'nominal'): 'chi2',
-                ('binary', 'ordinal'): 'mwu',
-                ('ordinal', 'ordinal'): 'spearman',
-                ('nominal', 'ordinal'): 'kruskal',
-                ('nominal', 'nominal'): 'chi2'
-            }
-        else:
-            raise ValueError(f"Invalid test type '{test_type}'. Specify 'parametric' or 'nonparametric' for association testing.")
-
-        rows = []
-        for var1 in const_vars:
-            for var2 in other_vars:
-                pair = tuple(sorted((meta[var1], meta[var2])))
-
-                test = map.get(pair)
-                row = {'label1': var1, 'label2': var2, 'raw-P': 1.0, 'raw-E': 0.0, 'test_type': test}
-                rows.append(row)
-
-        for var1, var2 in itertools.combinations(const_vars, 2):
-            pair = tuple(sorted((meta[var1], meta[var2])))
-            test = map.get(pair)
-
-            row = {'label1': var1, 'label2': var2, 'raw-P': 1.0, 'raw-E': 0.0, 'test_type': test}
-            rows.append(row)
-
-        return ord, nom, bi, cont, pd.DataFrame(rows)
-    
-    return ord, nom, bi, cont, pd.DataFrame()
+    return ord, nom, bi, cont, const_vars
 
 
 def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str, 

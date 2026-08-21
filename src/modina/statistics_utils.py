@@ -1,7 +1,9 @@
+import logging
+import os
 import numpy as np
 import pandas as pd
 from scipy import stats
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 # Convert Cohen's d to point-biserial r for ttest edges.
@@ -55,10 +57,55 @@ def add_pval_transforms(scores):
     return scores
 
 
-# Probit rescaling (rank-based normalization)
-def probit_rescaling(scores1, scores2, metric='rescaled-E'):
+# Test types whose raw effect size (see TEST_EFFECT_SIZES in context_net_inference.py) is
+# already a variance-explained (r²-equivalent) quantity: ANOVA's partial η² and Kruskal-Wallis's
+# η². These are used as-is by effect_size_to_r2 below, rather than being squared.
+_R2_SCALE_TEST_TYPES = {'anova', 'kruskal'}
+
+
+# Transform raw effect sizes onto a common, absolute r² (variance-explained) scale.
+# Unlike probit_rescaling's rank-based normalization (which only makes effect sizes comparable
+# relative to the observed sample), this uses known statistical conversions so that a given
+# transformed-E value has the same interpretation ("proportion of variance explained")
+# regardless of which test produced it:
+#   - pearson (r), spearman (rho), mwu (rank-biserial rb), ttest (already converted to
+#     point-biserial r upstream) and chi2 (Cramer's V, which equals phi for 2x2 tables and is
+#     treated as r-equivalent for larger tables) are all correlation-like coefficients on an
+#     r scale -> squared to obtain r².
+#   - anova (partial eta²) and kruskal (eta²) are already r²-equivalent quantities -> used as-is.
+# Sign is preserved for the squared test types (sign(r) * r²); the r²-scale test types have no
+# natural direction and their raw effect size is already non-negative, so this is a no-op there.
+# Operates on each context independently (no cross-context pooling is needed, unlike
+# probit_rescaling), but takes a (scores1, scores2) pair for calling-convention parity.
+def effect_size_to_r2(scores1, scores2, metric='transformed-E'):
     scores1 = scores1.copy()
     scores2 = scores2.copy()
+
+    for scores in (scores1, scores2):
+        raw = scores['raw-E'].to_numpy(dtype=float)
+        r2_scale = scores['test_type'].isin(_R2_SCALE_TEST_TYPES).to_numpy()
+        scores[metric] = np.where(r2_scale, raw, np.sign(raw) * raw ** 2)
+
+    return scores1, scores2
+
+
+# Probit rescaling (rank-based normalization)
+def probit_rescaling(scores1, scores2, metric='rescaled-E'):
+    # Remove variables flagged (single observed category, or entirely missing) in only one of
+    # the two contexts, so scores1/scores2 are row-aligned below. This is often the first point
+    # in a pipeline where both contexts' scores meet (e.g. the Nextflow pipeline's
+    # rescaling_networks.py, which reads scores1/scores2 straight from CSV before any filtering
+    # or differential-network step has a chance to reconcile them).
+    scores1, scores2, _, _, removed_variables = reconcile_flagged_variables(scores1, scores2)
+
+    scores1 = scores1.copy()
+    scores2 = scores2.copy()
+
+    # Always attach the (possibly empty) removed-variables list, so a direct Python caller can
+    # inspect it via scores1.attrs['removed_variables'] even without going through a Nextflow bin
+    # script or passing a 'path' anywhere.
+    scores1.attrs['removed_variables'] = removed_variables
+    scores2.attrs['removed_variables'] = removed_variables
 
     if metric != 'rescaled-E':
         raise ValueError(f"Invalid metric '{metric}'. Only 'rescaled-E' is supported.")
@@ -99,6 +146,96 @@ def probit_rescaling(scores1, scores2, metric='rescaled-E'):
         scores2.loc[idx2, metric] = probit_vals[len(v1):]
 
     return scores1, scores2
+
+
+# Find variables that are flagged (single observed category, or entirely missing) in only one
+# of the two contexts. A flagged variable is dropped from that context's network before any
+# tests are run (see context_net_inference._drop_single_category_variables), so it produces no
+# rows at all in that context's 'scores' -- while it may still be a perfectly valid, tested
+# variable in the other context. This asymmetry is exactly the symmetric difference of the two
+# contexts' node sets (the labels appearing in 'label1'/'label2'), so no extra bookkeeping is
+# needed to find it.
+def find_flagged_variables(scores1: pd.DataFrame, scores2: pd.DataFrame) -> list:
+    """
+    Return the sorted list of variables that appear as an edge endpoint in only one of
+    scores1/scores2 -- i.e. variables flagged (single observed category, or entirely missing)
+    in exactly one context and therefore absent from that context's association scores.
+
+    :param scores1: Association scores of Context 1.
+    :param scores2: Association scores of Context 2.
+    :return: Sorted list of flagged variable names.
+    """
+    nodes1 = set(scores1['label1']) | set(scores1['label2'])
+    nodes2 = set(scores2['label1']) | set(scores2['label2'])
+    return sorted(nodes1 ^ nodes2)
+
+
+# Reconcile two context-specific networks so they reference exactly the same set of edges.
+# Two independent things can make a pair (label1, label2) present in only one context's scores:
+# (1) a variable flagged as single-category/entirely-missing in one context (dropped from that
+#     context's network entirely, see context_net_inference._drop_single_category_variables), or
+# (2) NApy returning NaN for that specific pair in one context (dropped individually, see
+#     compute_context_scores' scores_na handling) even though the same pair tested fine in the
+#     other context.
+# Both leave scores1/scores2 with a mismatched, un-aligned set of rows, which breaks every
+# downstream step that assumes they're row-aligned (e.g. _subtract_edges, probit_rescaling). An
+# inner merge on (label1, label2, test_type) fixes both at once: any pair missing from either
+# side -- for either reason -- is naturally dropped from both, and the two DataFrames
+# reconstructed from the merge are guaranteed row-count-equal and identically ordered, so nothing
+# downstream needs to change how it compares scores1 to scores2.
+def reconcile_flagged_variables(scores1: pd.DataFrame, scores2: pd.DataFrame,
+                                context1: Optional[pd.DataFrame] = None, context2: Optional[pd.DataFrame] = None,
+                                path: Optional[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[pd.DataFrame], Optional[pd.DataFrame], list]:
+    """
+    Align two context-specific networks onto their common set of edges, so scores1 and scores2
+    stay row-aligned, and report which variables ended up with no edges left in either context.
+
+    :param scores1: Association scores of Context 1.
+    :param scores2: Association scores of Context 2.
+    :param context1: Optional observed data of Context 1; if given, variables with no edges left are also dropped as columns.
+    :param context2: Optional observed data of Context 2; if given, variables with no edges left are also dropped as columns.
+    :param path: Optional path to save the list of removed variables as a CSV file. Defaults to None.
+    :return: A tuple (scores1, scores2, context1, context2, removed_variables), with scores1/scores2
+             restricted to their common edges (row-aligned) and context1/context2 returned unchanged
+             (None) if not provided. 'removed_variables' is the sorted list of variables that no
+             longer appear as an edge endpoint in either context (empty if none) -- callers should
+             attach it as `.attrs['removed_variables']` on whatever they return, so it stays
+             discoverable to a caller even when no 'path' is given to write it to disk (e.g. a
+             direct Python/API call that never passes through a Nextflow bin script).
+    """
+    merge_keys = ['label1', 'label2', 'test_type']
+    value_cols = [c for c in scores1.columns if c in scores2.columns and c not in merge_keys]
+
+    nodes_before = (set(scores1['label1']) | set(scores1['label2'])
+                    | set(scores2['label1']) | set(scores2['label2']))
+    n1_before, n2_before = len(scores1), len(scores2)
+
+    merged = scores1.merge(scores2, on=merge_keys, how='inner', suffixes=('_1', '_2'))
+
+    # Reconstruct scores1/scores2 from the merge, preserving each one's own original column order.
+    original_cols1, original_cols2 = list(scores1.columns), list(scores2.columns)
+    scores1 = merged[merge_keys + [f'{c}_1' for c in value_cols]].rename(columns={f'{c}_1': c for c in value_cols})
+    scores2 = merged[merge_keys + [f'{c}_2' for c in value_cols]].rename(columns={f'{c}_2': c for c in value_cols})
+    scores1 = scores1[original_cols1].sort_values(by=merge_keys).reset_index(drop=True)
+    scores2 = scores2[original_cols2].sort_values(by=merge_keys).reset_index(drop=True)
+
+    nodes_after = set(scores1['label1']) | set(scores1['label2'])
+    flagged = sorted(nodes_before - nodes_after)
+    n_pairs_dropped = (n1_before - len(merged)) + (n2_before - len(merged))
+
+    if flagged or n_pairs_dropped:
+        logging.warning(f'Reconciling the two contexts\' networks: {n_pairs_dropped} pair(s) present in only '
+                        f'one context (either a variable flagged there, or NApy returning NaN for that specific '
+                        f'pair) were dropped from both. {len(flagged)} variable(s) now have no edges left in '
+                        f'either context: {flagged}.')
+        if path is not None:
+            pd.DataFrame({'label': flagged}).to_csv(os.path.join(path, 'flagged_variables_removed.csv'), index=False)
+
+    if flagged and context1 is not None and context2 is not None:
+        context1 = context1.drop(columns=flagged, errors='ignore')
+        context2 = context2.drop(columns=flagged, errors='ignore')
+
+    return scores1, scores2, context1, context2, flagged
 
 
 def _separate_types(all_data, meta_file) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:

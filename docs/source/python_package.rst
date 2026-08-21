@@ -198,7 +198,7 @@ Parameters:
 
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
 - ``meta_file``: pandas DataFrame specifying the variable metadata. Must contain the columns ``label`` and ``type`` describing each variable and its data type.
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'diff-E'``, ``'diff-L-P'``, ``'diff-L-PE'``, ``'sum-diff-PE'``, ``'sum-diff-L-PE'``, ``'int-IS-E'``.
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'diff-E'``, ``'diff-T-E'``, ``'diff-L-P'``, ``'diff-L-PE'``, ``'sum-diff-PE'``, ``'sum-diff-L-PE'``, ``'int-IS-E'``.
 - ``node_metric``: Node-level metric used to compute the differential network. Options include ``'STC'``, ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-L-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'PRC-L-P'``, ``'PRC-E'``.
 - ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'``, ``'direct_node'`` and ``'direct_edge'``. Defaults to ``'PageRank+'``.
 - ``filter_method``: Filtering method. Options include ``'degree'``, ``'density'``. Required when ``filter_target`` is not ``None``.
@@ -499,16 +499,24 @@ Differential Network Construction
 
 Two context-specific networks are aggregated into a differential network using a 
 variety of node- and edge-level metrics provided in the ``compute_diff_network`` function. 
-Since effect sizes obtained from data type-specific 
-statistical tests are located on different scales, rescaling is required to make them 
+Since effect sizes obtained from data type-specific
+statistical tests are located on different scales, rescaling is required to make them
 comparable across data types. This can be achieved either through Z-score normalization,
 which is used in ``pre`` metrics, or through min–max normalization, which is used in ``post`` metrics.
+
+Both of these rescale each test type's effect size *by rank* within the observed data, so
+comparability is only relative to the current sample. As an absolute-scale alternative,
+``diff-T-E`` converts each test type's effect size onto a common r² (variance-explained) scale
+using known statistical conversions (e.g. squaring a correlation coefficient, or using partial
+η²/η² directly, since they are already r²-equivalent), so a given ``transformed-E`` value has
+the same interpretation regardless of which test produced it, independent of rank within the
+sample.
 
 Parameters:
 
 - ``scores1``, ``scores2``: pandas DataFrames containing the statistical association scores of the two context-specific networks.
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'diff-E'``, ``'diff-L-P'``, ``'diff-L-PE'``, ``'sum-diff-PE'``, ``'sum-diff-L-PE'``, ``'int-IS-E'``.
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'diff-E'``, ``'diff-T-E'``, ``'diff-L-P'``, ``'diff-L-PE'``, ``'sum-diff-PE'``, ``'sum-diff-L-PE'``, ``'int-IS-E'``.
 - ``node_metric``: Node-level metric used to compute the differential network. Options include ``'STC'``, ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-L-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'PRC-L-P'``, ``'PRC-E'``.
 - ``max_path_length``: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to ``2``.
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.

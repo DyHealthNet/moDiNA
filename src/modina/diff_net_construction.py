@@ -1,4 +1,4 @@
-from modina.statistics_utils import probit_rescaling, _df_to_numpy, _separate_types, add_pval_transforms, fdr_correction
+from modina.statistics_utils import probit_rescaling, effect_size_to_r2, _df_to_numpy, _separate_types, add_pval_transforms, fdr_correction, reconcile_flagged_variables
 from modina.context_net_inference import _order_categories
 
 import os
@@ -45,22 +45,26 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     nodes_diff = None
     edge_node_stats = None
 
-    # Check for variables with only one observed category
     assert context1.columns.equals(context2.columns), 'Context data should contain the same columns.'
-    vars = context1.columns
-    for var in vars:
-        if pd.concat([context1[var], context2[var]]).nunique() <= 1:
-            logging.warning(f'Variable "{var}" has only one observed category in both contexts. It is recommended to remove this variable in future analyses,'
-                            f'as it does not provide meaningful information for differential network analysis.')
+
+    # Remove variables flagged (single observed category, or entirely missing) in only one of
+    # the two contexts, so scores1/scores2 (and context1/context2) stay aligned on the same
+    # node set for the edge/node computations below.
+    scores1, scores2, context1, context2, removed_variables = reconcile_flagged_variables(scores1, scores2, context1, context2, path=path)
 
     # Edges
     if edge_metric is not None:
         edges_diff, edge_node_stats = compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, max_path_length=max_path_length, name1=name1, name2=name2)
+        # scores1/scores2 are already reconciled above, so compute_diff_edges' own (redundant)
+        # reconciliation pass finds nothing left to remove -- overwrite with the list found here,
+        # which reflects what was actually removed for this differential network.
+        edges_diff.attrs['removed_variables'] = removed_variables
 
     # Nodes
     if node_metric is not None:
         nodes_diff = compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
                                          node_metric=node_metric, correction=correction, meta_file=meta_file, test_type=test_type, nan_value=nan_value, num_workers=num_workers)
+        nodes_diff.attrs['removed_variables'] = removed_variables
 
     if path is not None:
         if format == 'csv':
@@ -411,6 +415,13 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
              node-indexed DataFrame of per-node statistics over incident edges (see edge_node_statistics).
     """
 
+    # Remove variables flagged (single observed category, or entirely missing) in only one of
+    # the two contexts, so scores1/scores2 are row-aligned for the subtraction below. This also
+    # protects direct callers that skip compute_diff_network (e.g. a direct Python/API call, or
+    # the Nextflow pipeline's differential_edge_inference.py, which reads scores1/scores2
+    # straight from CSV).
+    scores1, scores2, _, _, removed_variables = reconcile_flagged_variables(scores1, scores2)
+
     # Snapshot the per-context raw p-values and effect sizes before any metric-specific
     # reassignment of scores1/scores2 (e.g. int-IS-E). Merged back onto the result below
     # so downstream tools can show both contexts' statistics per edge.
@@ -438,6 +449,15 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
         if 'rescaled-E' not in scores1.columns:
             scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
         edges_diff = _subtract_edges(scores1, scores2, values='rescaled-E', metric=edge_metric)
+
+    # Absolute difference of r²-transformed effect sizes (diff-T-E). Unlike diff-E's rank-based
+    # rescaling, transformed-E converts each test type's effect size onto an absolute r² scale
+    # via known statistical conversions (see effect_size_to_r2), so it is comparable across
+    # contexts and test types without depending on the observed sample's rank distribution.
+    elif edge_metric == 'diff-T-E':
+        if 'transformed-E' not in scores1.columns:
+            scores1, scores2 = effect_size_to_r2(scores1, scores2, metric='transformed-E')
+        edges_diff = _subtract_edges(scores1, scores2, values='transformed-E', metric=edge_metric)
 
     # Sum of diff-P and diff-E (sum-diff-PE) — naive raw-scale baseline (no normalization,
     # so diff-E dominates the larger range). The signed form mixes p-value and effect-size
@@ -492,7 +512,7 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
         edges_diff = _subtract_edges(scores1, scores2, values='log-P', metric=edge_metric)
 
     else:
-        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'diff-P', 'int-IS-E', 'diff-E', 'sum-diff-PE', 'sum-diff-L-PE', 'diff-L-PE', or 'diff-L-P'.")
+        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'diff-P', 'int-IS-E', 'diff-E', 'diff-T-E', 'sum-diff-PE', 'sum-diff-L-PE', 'diff-L-PE', or 'diff-L-P'.")
 
     # Extract only the relevant columns (eliminate intermediary columns used for computation)
     edge_metric_signed = edge_metric + '_signed'
@@ -511,6 +531,10 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
         edges_diff.to_csv(path)
         stats_path = _edge_node_stats_path(path)
         edge_node_stats.to_csv(stats_path)
+
+    # Always attach the (possibly empty) removed-variables list, so a direct Python caller can
+    # inspect it via edges_diff.attrs['removed_variables'] even without passing 'path'.
+    edges_diff.attrs['removed_variables'] = removed_variables
 
     return edges_diff, edge_node_stats
 
@@ -582,6 +606,13 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     """
     assert context1.columns.equals(context2.columns), 'Context a and b need to have the same structure.'
 
+    # Remove variables flagged (single observed category, or entirely missing) in only one of
+    # the two contexts, so scores1/scores2 don't disagree on which nodes exist. This also
+    # protects direct callers that skip compute_diff_network (e.g. a direct Python/API call, or
+    # the Nextflow pipeline's differential_node_inference.py, which reads scores1/scores2
+    # straight from CSV).
+    scores1, scores2, context1, context2, removed_variables = reconcile_flagged_variables(scores1, scores2, context1, context2)
+
     # Keep only the variables that are present in the scores dataframes
     vars = pd.concat([scores1['label1'], scores1['label2'], scores2['label1'], scores2['label2']]).unique()
     context1 = context1[context1.columns.intersection(vars)]
@@ -643,6 +674,10 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
 
     if path is not None:
         nodes_diff.to_csv(path)
+
+    # Always attach the (possibly empty) removed-variables list, so a direct Python caller can
+    # inspect it via nodes_diff.attrs['removed_variables'] even without passing 'path'.
+    nodes_diff.attrs['removed_variables'] = removed_variables
 
     return nodes_diff
 

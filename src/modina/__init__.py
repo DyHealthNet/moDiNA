@@ -4,9 +4,9 @@ from modina.edge_filtering import filter, filter_single, filter_differential
 from modina.diff_net_construction import compute_diff_network, compute_diff_edges, compute_diff_nodes, edge_node_statistics
 from modina.ranking import compute_ranking
 from modina.pipeline import diffnet_analysis
-from modina.statistics_utils import probit_rescaling, cohens_d_to_r, add_pval_transforms
+from modina.statistics_utils import probit_rescaling, cohens_d_to_r, add_pval_transforms, effect_size_to_r2, find_flagged_variables
 
 __all__ = ["diffnet_analysis", "compute_context_scores", "filter", "filter_single", "filter_differential",
            "compute_diff_network", "compute_diff_edges", "compute_diff_nodes", "edge_node_statistics",
            "compute_ranking", "simulate_copula", "save_gt",
-           "probit_rescaling", "cohens_d_to_r", "add_pval_transforms"]
+           "probit_rescaling", "cohens_d_to_r", "add_pval_transforms", "effect_size_to_r2", "find_flagged_variables"]
