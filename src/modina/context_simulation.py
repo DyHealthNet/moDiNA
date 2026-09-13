@@ -26,6 +26,25 @@ _EFFECT_JITTER = 0.1
 # the true ceiling avoids a matrix that is technically valid but singular in floating point.
 _HUB_SUMSQ_CEILING = 0.95
 
+# Hard clip applied when a planted magnitude is added on top of a background value. Only reachable
+# with a strong background and a large `corr` simultaneously; it exists so the result is never an
+# out-of-range correlation, but hitting it means the requested effect was not delivered in full, so
+# it is warned about rather than passed over silently.
+_MAX_ABS_CORR = 0.99
+
+
+# Magnitude written into every off-diagonal cell of the background precision matrix Omega. Its
+# absolute value is arbitrary: `background_strength` is reached by solving for the diagonal
+# loading, which can compensate for any choice here, so exposing both would be two dials for one
+# effect. Only the random +/- sign per edge matters structurally.
+_BACKGROUND_OMEGA_WEIGHT = 0.5
+
+# Bracket and iteration count for the bisection that turns `background_strength` (a target on the
+# OUTPUT correlation matrix) into a diagonal loading (an input to Omega). Strength is monotonically
+# decreasing in the loading, so bisection is exact to ~1e-14 after this many halvings.
+_BACKGROUND_LOAD_BRACKET = (1e-4, 1e3)
+_BACKGROUND_LOAD_ITERS = 60
+
 
 def _jittered_effect(value, low=0.0, high=None, delta=_EFFECT_JITTER):
     """Draw an effect magnitude uniformly from [value - delta, value + delta], clipped to [low, high].
@@ -41,6 +60,118 @@ def _jittered_effect(value, low=0.0, high=None, delta=_EFFECT_JITTER):
     return jittered
 
 
+def _background_edges(n_vars, topology, density, rng):
+    """Draw the sparse wiring that the background is built from.
+
+    Returns a list of (i, j) index pairs with i < j. `density` is the number of connections each
+    newly added node makes; both generators produce the same edge count so the two topologies are
+    comparable at equal density.
+    """
+    if density < 1:
+        raise ValueError(f'background_density must be at least 1, got {density}.')
+    if density >= n_vars:
+        raise ValueError(f'background_density ({density}) must be smaller than the number of '
+                         f'variables ({n_vars}).')
+
+    if topology == 'scale_free':
+        # Barabasi-Albert preferential attachment: each new node attaches to `density` existing
+        # nodes chosen with probability proportional to their current degree. The rich-get-richer
+        # feedback is what produces hubs -- they emerge from the growth rule, not from a parameter.
+        edges = [(i, j) for i in range(density) for j in range(i + 1, density)]
+        repeated = [end for edge in edges for end in edge] or list(range(density))
+        for src in range(density, n_vars):
+            targets = []
+            while len(targets) < density:
+                candidate = int(rng.choice(repeated))
+                if candidate not in targets:
+                    targets.append(candidate)
+            edges.extend((min(src, t), max(src, t)) for t in targets)
+            repeated.extend(targets + [src] * density)
+        return edges
+
+    if topology == 'erdos_renyi':
+        # Uniformly random wiring at the same edge count: no hubs, degrees concentrated around the
+        # mean. Useful as a null topology to check that a result is driven by hub structure rather
+        # than by density alone.
+        all_pairs = [(i, j) for i in range(n_vars) for j in range(i + 1, n_vars)]
+        n_edges = min(len(all_pairs), n_vars * density - density * (density + 1) // 2)
+        picked = rng.choice(len(all_pairs), size=n_edges, replace=False)
+        return [all_pairs[i] for i in sorted(picked)]
+
+    raise ValueError(f"background_topology must be None, 'scale_free' or 'erdos_renyi', "
+                     f"got {topology!r}.")
+
+
+def _background_sigma(n_vars, edges, signs, load):
+    """Assemble Omega at the given diagonal loading and return the implied correlation matrix.
+
+    The diagonal is set to each row's absolute off-diagonal sum plus `load`, which makes Omega
+    strictly diagonally dominant. By Gershgorin's circle theorem every eigenvalue then lies in
+    [load, 2*rowsum + load], so Omega is positive definite by construction for any load > 0 -- no
+    check, no repair. Inverting a positive definite matrix yields a positive definite one, so
+    Sigma_base is valid for free. That guarantee covers the BACKGROUND only; it says nothing about
+    what happens once differential edges are written into Sigma afterwards.
+    """
+    omega = np.zeros((n_vars, n_vars))
+    for (a, b), sign in zip(edges, signs):
+        omega[a, b] = omega[b, a] = _BACKGROUND_OMEGA_WEIGHT * sign
+    np.fill_diagonal(omega, np.abs(omega).sum(axis=1) + load)
+    cov = np.linalg.inv(omega)
+    scale = np.sqrt(np.diag(cov))
+    return cov / np.outer(scale, scale)
+
+
+def _build_background(n_vars, topology, strength, density, seed):
+    """Build a dense background correlation matrix from a sparse network.
+
+    Returns (sigma_base, edges, lambda_min). With `topology=None` this is the identity, an empty
+    edge list and lambda_min 1.0 -- i.e. exactly the historical "no background" behaviour, and the
+    rest of the simulation is unchanged.
+
+    `strength` is a target on the OUTPUT (mean |r| over directly-wired pairs), not an input, because
+    the entries of Omega have no interpretable scale on their own: what a given Omega entry produces
+    in Sigma depends on the density of the network and on the degree of the two nodes it joins. The
+    diagonal loading that hits the target is found by bisection, which is valid because strength is
+    strictly decreasing in the loading.
+    """
+    if topology is None:
+        return np.eye(n_vars), [], 1.0
+    if not 0.0 < strength < 1.0:
+        raise ValueError(f'background_strength must lie strictly between 0 and 1, got {strength}.')
+
+    # A dedicated Generator, never the global `random`/`np.random` streams the rest of the
+    # simulation draws from. Turning the background on therefore does not shift any downstream
+    # draw: the same seed plants the same edges with the same magnitudes either way.
+    rng = np.random.default_rng(seed)
+    edges = _background_edges(n_vars, topology, density, rng)
+    signs = rng.choice([-1.0, 1.0], size=len(edges))
+
+    def wired_mean(load):
+        sigma = _background_sigma(n_vars, edges, signs, load)
+        return float(np.mean([abs(sigma[a, b]) for a, b in edges]))
+
+    # Strength is bounded above by the topology: denser wiring forces a larger diagonal, which
+    # dilutes every correlation. Requesting more than the ceiling is unsatisfiable at any loading,
+    # and a plain bisection would silently return the bracket edge instead of saying so.
+    low, high = _BACKGROUND_LOAD_BRACKET
+    ceiling = wired_mean(low)
+    if strength >= ceiling:
+        raise ValueError(
+            f'background_strength={strength} is unreachable at background_density={density} with '
+            f'{n_vars} variables: the highest attainable mean |r| on wired pairs is {ceiling:.3f}. '
+            f'Lower background_strength, or lower background_density (a sparser network sustains '
+            f'stronger correlations).')
+
+    for _ in range(_BACKGROUND_LOAD_ITERS):
+        mid = (low + high) / 2
+        if wired_mean(mid) > strength:
+            low = mid
+        else:
+            high = mid
+    sigma_base = _background_sigma(n_vars, edges, signs, mid)
+    return sigma_base, edges, float(np.linalg.eigvalsh(sigma_base).min())
+
+
 # Simulate mixed data using a gaussian copula 
 def simulate_copula(path=None, name1='context1', name2='context2',
                     n_bi=50, n_cont=50, n_cat=50, n_samples_1=500, n_samples_2=500,
@@ -48,6 +179,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                     n_corr_cont_cont=0, n_corr_bi_bi=0, n_corr_cat_cat=0, n_corr_bi_cont=0, n_corr_bi_cat=0, n_corr_cont_cat=0, 
                     n_both_cont_cont=0, n_both_bi_bi=0, n_both_cat_cat=0, n_both_bi_cont=0, n_both_bi_cat=0, n_both_cont_cat=0,
                     shift=0.5, corr=0.7, hub_reuse_prob=0.0,
+                    background_topology=None, background_strength=0.2, background_density=2,
+                    background_seed=None,
                     binary_p_low=0.3, binary_p_high=0.7, ordinal_concentration=20.0):
     """
     Simulate two contexts with binary and continuous nodes using a Gaussian copula.
@@ -100,6 +233,28 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                          attenuates the correlation difference actually realised on its edges. Widen
                          this range for more marginal variety, at the cost of less comparable effect
                          sizes across edges. Use 0.0/1.0 for the historical behaviour.
+    :param background_topology: Wiring used to build the background correlation structure, or None
+                                (default) for the historical behaviour in which every pair that was
+                                not deliberately planted is exactly independent. 'scale_free' grows
+                                the network by preferential attachment, producing a few high-degree
+                                hubs and a heavy-tailed degree distribution; 'erdos_renyi' wires the
+                                same number of edges uniformly at random, producing no hubs. The
+                                background is built ONCE and shared by both contexts, so every pair
+                                that is not planted has bit-identical correlation in the two
+                                contexts and the negatives stay exactly null.
+    :param background_strength: Target mean |r| over the directly-wired pairs of the background.
+                                This is a property of the resulting correlation matrix, not a value
+                                written anywhere: the diagonal loading that attains it is solved for
+                                by bisection. It is bounded above by the topology (denser wiring
+                                forces weaker correlations); an unreachable request raises with the
+                                attainable ceiling. Ignored when background_topology is None.
+    :param background_density: Number of connections each node makes when it is added to the
+                               network. Sets both the edge count and, for 'scale_free', how large
+                               the hubs grow. Higher density lowers the reachable strength.
+    :param background_seed: Seed for the background's own random generator. Kept separate from the
+                            global streams the rest of the simulation draws from, so switching the
+                            background on or off does not change which pairs get planted or with
+                            what magnitudes.
     :param binary_p_high: Upper bound of the base rate drawn per binary node.
     :param ordinal_concentration: Symmetric Dirichlet concentration for the category probabilities of
                                   each ordinal node. Large values keep the categories near-balanced;
@@ -117,6 +272,9 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                -> sum of jittered magnitudes over those edges). Feeds the extra columns written to
                `ground_truth_edges.txt`/`ground_truth_nodes.txt` when `path` is given, and lets a
                caller that writes those files itself (as the Nextflow CLI wrapper does) do the same.
+               Also carries 'corr_base' (the shared background correlation matrix), 'background_edges'
+               (the directly-wired pairs, as node-name frozensets) and 'background_lambda_min' (the
+               perturbation budget the planting step was checked against).
     """
     if n_bi <= 0 and n_cont <= 0 and n_cat <= 0:
         raise ValueError('Either n_bi, n_cont, or n_cat needs to be larger than zero.')
@@ -187,8 +345,44 @@ def simulate_copula(path=None, name1='context1', name2='context2',
 
     # Create correlation matrix
     n_vars = n_bi + n_cont + n_cat
-    corr1 = np.eye(n_vars)
-    corr2 = np.eye(n_vars)
+
+    # The background is built once and copied into both contexts, rather than drawn twice. That is
+    # what keeps the negatives clean: an unplanted pair holds bit-identical values in corr1 and
+    # corr2, so its true between-context difference is exactly zero rather than merely small.
+    sigma_base, background_pairs, background_lambda_min = _build_background(
+        n_vars, background_topology, background_strength, background_density, background_seed)
+    corr1 = sigma_base.copy()
+    corr2 = sigma_base.copy()
+
+    # Budget for the planting step. Every differential edge nudges one cell of Sigma; Weyl's
+    # inequality bounds the damage by the spectral norm of the whole perturbation, and because
+    # hub_reuse_prob only ever produces disjoint stars that norm is exactly
+    # sqrt(max over nodes of sum(magnitude**2)) -- the quantity `node_sumsq` already tracks. Keeping
+    # every node's sum(magnitude**2) below lambda_min**2 is therefore a sufficient condition for
+    # both context matrices to stay positive definite. With the background off lambda_min is 1 and
+    # the rule reduces to sum(magnitude**2) < 1, the exact Schur-complement condition the hard-coded
+    # _HUB_SUMSQ_CEILING was approximating; the historical constant is kept verbatim in that case so
+    # behaviour without a background is unchanged.
+    #
+    # Note this ceiling is consulted ONLY when deciding whether a node may take on another edge, so
+    # it constrains how much a hub accumulates -- it does not bound the very first edge on a node.
+    # A single edge larger than lambda_min can break validity on its own, which is what the check
+    # just below warns about and the eigenvalue test before sampling catches for certain.
+    hub_sumsq_ceiling = (_HUB_SUMSQ_CEILING if background_topology is None
+                         else background_lambda_min ** 2)
+
+    # The largest magnitude any single edge can draw. If even one edge exceeds the budget, no hub
+    # ceiling can help -- warn here, where the fix (lower `corr`, or weaken the background) is
+    # obvious, rather than leaving only the eigenvalue failure several steps later. Warned rather
+    # than raised because Weyl is a worst case: a perturbation rarely points along the narrowest
+    # direction, so configurations moderately over this line usually still produce a valid matrix.
+    _max_magnitude = min(corr + _EFFECT_JITTER, 0.95)
+    if background_topology is not None and _max_magnitude >= background_lambda_min:
+        logging.warning(
+            f'corr={corr} can draw magnitudes up to {_max_magnitude:.3f}, which exceeds the '
+            f'budget left by the background (lambda_min={background_lambda_min:.4f}). The '
+            f'correlation matrices may not be positive definite. Lower `corr`, or lower '
+            f'`background_strength` to leave more budget.')
 
     # Bookkeeping shared across every _set_corr call below, so a node can be recognised as an
     # already-placed "hub" candidate regardless of which pair-type loop first drew it. See
@@ -206,7 +400,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
             nodes=nodes, corr_param=corr, corr_matrix1=corr1, corr_matrix2=corr2,
             node_degree=node_degree, node_sumsq=node_sumsq, node_sum_magnitude=node_sum_magnitude,
             node_first_partner=node_first_partner, hub_eligible=hub_eligible,
-            hub_reuse_prob=hub_reuse_prob, **pools)
+            hub_reuse_prob=hub_reuse_prob, hub_sumsq_ceiling=hub_sumsq_ceiling, **pools)
         edge_magnitude[frozenset(node_pair)] = magnitude
         return node_pair, c1, c2
 
@@ -289,11 +483,29 @@ def simulate_copula(path=None, name1='context1', name2='context2',
             else:
                 mean_vector2[nodes.index(node)] = sign * magnitude
 
+    # The background construction guarantees Sigma_base is valid, but that guarantee does not
+    # survive writing differential edges into it. The hub ceiling above is a sufficient condition
+    # and should already have prevented any violation; this is the exact test, and it is cheap
+    # (a few ms even at several hundred variables) relative to the sampling that follows. It fails
+    # loudly rather than repairing, because the usual repair (projecting to the nearest valid
+    # matrix) perturbs cells that were never planted and would silently corrupt the ground truth.
+    for label, matrix in ((name1, corr1), (name2, corr2)):
+        smallest = float(np.linalg.eigvalsh(matrix).min())
+        if smallest <= 0:
+            raise ValueError(
+                f'The correlation matrix for {label} is not positive definite (smallest eigenvalue '
+                f'{smallest:.4g}) after planting the differential edges, so no data can have this '
+                f'structure. The background left a budget of lambda_min='
+                f'{background_lambda_min:.4f}; a node carrying degree d edges of size m spends '
+                f'sqrt(d)*m of it. Reduce `corr`, reduce `hub_reuse_prob` so fewer edges pile onto '
+                f'one node, or lower `background_strength` to free up budget.')
+
     # Gaussian copula
     u1 = _simu_gaussian(n=n_vars, m=n_samples_1, corr_matrix=corr1, mean_vector=mean_vector1)
     u2 = _simu_gaussian(n=n_vars, m=n_samples_2, corr_matrix=corr2, mean_vector=mean_vector2)
 
     # Transform to marginal distributions using the inverse CDF
+    marginals = {}
     for i, node in enumerate(nodes):
         if i < n_cont:
             # Continuous node
@@ -301,6 +513,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
             std = 0.5
             context1_cont[node] = sc.stats.norm.ppf(u1[i, :], loc=mean, scale=std)
             context2_cont[node] = sc.stats.norm.ppf(u2[i, :], loc=mean, scale=std)
+            marginals[node] = {'kind': 'continuous', 'loc': mean, 'scale': std}
 
         elif n_cont <= i < n_cont + n_bi:
             # Binary node. The base rate is drawn from [binary_p_low, binary_p_high] rather than
@@ -311,6 +524,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
             p = np.random.uniform(binary_p_low, binary_p_high)
             context1_bi[node] = sc.stats.bernoulli.ppf(u1[i, :], p=p).astype(int)
             context2_bi[node] = sc.stats.bernoulli.ppf(u2[i, :], p=p).astype(int)
+            marginals[node] = {'kind': 'binary', 'p': float(p)}
 
         else:
             # Categorical node
@@ -323,6 +537,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
             cdf = np.cumsum(p)
             context1_cat[node] = np.searchsorted(cdf, u1[i, :])
             context2_cat[node] = np.searchsorted(cdf, u2[i, :])
+            marginals[node] = {'kind': 'ordinal', 'cdf': cdf.tolist()}
 
     # Combine continuous and binary data
     context1 = context1_cont.join(context1_bi)
@@ -341,7 +556,13 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     for pair in corr_nodes + shift_corr_nodes:
         gt_nodes.update(pair)
     node_stats = {node: (node_degree.get(node, 0), node_sum_magnitude.get(node, 0.0)) for node in gt_nodes}
-    effects = {'edge_magnitude': edge_magnitude, 'node_degree': node_degree, 'node_sum_magnitude': node_sum_magnitude}
+    effects = {'edge_magnitude': edge_magnitude, 'node_degree': node_degree, 'node_sum_magnitude': node_sum_magnitude,
+               'corr_matrix1': corr1, 'corr_matrix2': corr2,
+               'mean_vector1': mean_vector1, 'mean_vector2': mean_vector2,
+               'node_order': list(nodes), 'marginals': marginals,
+               'corr_base': sigma_base,
+               'background_edges': [frozenset((nodes[a], nodes[b])) for a, b in background_pairs],
+               'background_lambda_min': background_lambda_min}
 
     # Save simulated contexts and ground truth nodes
     if path:
@@ -357,7 +578,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
 # Helper function to set correlation in copula-based simulation
 def _set_corr(nodes, corr_param, corr_matrix1, corr_matrix2, normal_nodes_bi=None, normal_nodes_cont=None, normal_nodes_cat=None,
               node_degree=None, node_sumsq=None, node_sum_magnitude=None, node_first_partner=None, hub_eligible=None,
-              hub_reuse_prob=0.0):
+              hub_reuse_prob=0.0, hub_sumsq_ceiling=_HUB_SUMSQ_CEILING):
     node_degree = {} if node_degree is None else node_degree
     node_sumsq = {} if node_sumsq is None else node_sumsq
     node_sum_magnitude = {} if node_sum_magnitude is None else node_sum_magnitude
@@ -403,7 +624,7 @@ def _set_corr(nodes, corr_param, corr_matrix1, corr_matrix2, normal_nodes_bi=Non
         candidates = [n for n in hub_eligible if n.startswith(prefix)]
         if candidates:
             candidate = random.choice(candidates)
-            if node_sumsq.get(candidate, 0.0) + magnitude ** 2 < _HUB_SUMSQ_CEILING:
+            if node_sumsq.get(candidate, 0.0) + magnitude ** 2 < hub_sumsq_ceiling:
                 reused_node = candidate
             # else: committing this edge would push the hub past the validity ceiling -- abandon
             # the reuse (no shrinking, no search for a different hub) and draw a fresh pair below.
@@ -450,10 +671,15 @@ def _set_corr(nodes, corr_param, corr_matrix1, corr_matrix2, normal_nodes_bi=Non
     sign = random.choice([1, -1])
     which = random.choice([1, 2])
 
-    if which == 1:
-        corr_matrix1[idx1, idx2] = corr_matrix1[idx2, idx1] = magnitude * sign
-    else:
-        corr_matrix2[idx1, idx2] = corr_matrix2[idx2, idx1] = magnitude * sign
+    # Add to whatever is already there rather than overwriting it. With no background the cell
+    # holds 0 and the two are identical (0 + m*s == m*s), so this is a no-op for the historical
+    # behaviour. With a background the distinction matters twice over: adding makes the realised
+    # between-context difference exactly `magnitude` regardless of the background value underneath,
+    # and it moves the cell by exactly `magnitude` instead of by |magnitude*sign - background|,
+    # which can be nearly twice as far and eats the positive-definiteness budget accordingly.
+    target = corr_matrix1 if which == 1 else corr_matrix2
+    updated = np.clip(target[idx1, idx2] + magnitude * sign, -_MAX_ABS_CORR, _MAX_ABS_CORR)
+    target[idx1, idx2] = target[idx2, idx1] = updated
 
     return (node1, node2), magnitude, corr_matrix1, corr_matrix2, normal_nodes_bi, normal_nodes_cont, normal_nodes_cat
 
