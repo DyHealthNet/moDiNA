@@ -100,7 +100,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     # Compute number of edges to retain according to the specified method
     n_nodes = context1.shape[1]
     n_edges_before = scores1.shape[0]
-    n_filtered_edges = _num_target_edges(filter_method, filter_param, n_nodes)
+    n_filtered_edges = min(_num_target_edges(filter_method, filter_param, n_nodes), n_edges_before)
 
     logging.info(f"Filtering edges using method '{filter_method}' with parameter {filter_param}.")
     logging.info(f"Number of edges to retain after filtering: {n_filtered_edges}.")
@@ -215,7 +215,7 @@ def filter_single(scores: pd.DataFrame, context: pd.DataFrame,
 
     n_nodes = context.shape[1]
     n_edges_before = scores.shape[0]
-    n_filtered_edges = _num_target_edges(filter_method, filter_param, n_nodes)
+    n_filtered_edges = min(_num_target_edges(filter_method, filter_param, n_nodes), n_edges_before)
 
     logging.info(f"Filtering edges of a single network using method '{filter_method}' with parameter {filter_param}.")
     logging.info(f"Number of edges to retain after filtering: {n_filtered_edges}.")
