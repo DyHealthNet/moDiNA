@@ -295,6 +295,20 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
         result = napy.ttest(bin_data=bi_phenotypes_two, cont_data=cont_phenotypes, axis=1,
                                      threads=num_workers, nan_value=nan_value,
                                      return_types=['p_unadjusted', TEST_EFFECT_SIZES['ttest']])
+        # NApy (napypi 1.1.9) computes the t-test as group0 - group1, the opposite of the usual
+        # group1 - group0 convention: both its 't' and its 'cohens_d' come back negated (verified
+        # against scipy/manual -- magnitudes agree to 4+ decimals, sign is exactly -1x, and the
+        # docstring does not mention a group order). Uncorrected, every SIGNED binary-continuous
+        # result is backwards relative to pearson 'r' / spearman 'rho' / mwu 'rb', which are all
+        # conventional; a consistent flip does not cancel in a between-context difference, so it
+        # reverses the direction of diff-L-P_signed, diff-L-PE, diff-T-E and rescaled-E for these
+        # pairs. Magnitudes, two-sided p-values and AUCs are unaffected, which is why it went
+        # unnoticed. Normalised here, at the boundary, so raw-E is conventionally signed for every
+        # consumer downstream (including statistics_utils.cohens_d_to_r).
+        # Guarded by tests/test_ttest_sign.py, which fails if napy's convention ever changes --
+        # do not drop this negation without re-running it.
+        effect_key = TEST_EFFECT_SIZES['ttest']
+        result[effect_key] = -result[effect_key]
         done_test = "ttest"
 
     elif test == 'nonparametric':
