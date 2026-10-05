@@ -211,6 +211,7 @@ Parameters:
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
 - ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.
 - ``num_workers``: Number of parallel workers used during score computation. Defaults to ``1``.
+- ``n_min_valid``: Minimum number of samples, after pairwise removal of missing values, that a pairwise association test must be based on. Edges tested on fewer samples in either context are removed from both context networks. Defaults to ``10``.
 - ``project_path``: Optional directory where intermediate results and output files will be stored.
 - ``name1``, ``name2``: Names of the two contexts used for labeling and output file generation.
 
@@ -326,6 +327,7 @@ Parameters:
 - ``test_type``: Statistical tests used for network inference. Options include ``'parametric'`` and ``'nonparametric'``. Defaults to ``'nonparametric'``.
 - ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.
 - ``num_workers``: Number of parallel workers for computation. Defaults to ``1``.
+- ``n_min_valid``: Minimum number of samples, after pairwise removal of missing values, that a pairwise association test must be based on. Pairs below this are excluded from the returned scores and listed in the ``scores_na`` diagnostics with ``reason='low_n'``. Defaults to ``10``.
 - ``path``: Optional file path to save the computed scores as a CSV file. Defaults to ``None``.
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
 

@@ -22,7 +22,7 @@ TEST_EFFECT_SIZES = {
 }
 
 
-def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89.0, correction='bh') -> pd.DataFrame:
+def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89.0, correction='bh', n_min_valid=10) -> pd.DataFrame:
     cont_data = cont_data.copy()
     if not cont_data.select_dtypes(include=[np.number]).shape[1] == cont_data.shape[1]:
         raise ValueError('Continuous data contains non-numeric columns.')
@@ -65,13 +65,16 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
     p_unadj = '_p_unadjusted'
     p_columns = [column for column in column_names if p_unadj in column]
     e_columns = [column for column in column_names if '_e_' in column]
+    n_columns = [column for column in column_names if column.endswith('_n')]
 
     scores_final = scores[['label1', 'label2']].copy()
 
-    # Pre-compute per p-column: test name and the matching e-column
+    # Pre-compute per p-column: test name and the matching e- and n-column
     p_col_to_test = {col: col.split('_')[0] for col in p_columns}
     p_col_to_e    = {col: next(ec for ec in e_columns if col.split('_')[0] in ec)
                      for col in p_columns}
+    p_col_to_n    = {col: f"{col.split('_')[0]}_n" for col in p_columns}
+    assert all(nc in n_columns for nc in p_col_to_n.values()), "Missing 'n' column for a test."
 
     # (n_rows × n_p_cols) matrix; argmax along axis-1 gives the first non-NaN index
     p_mat     = scores[p_columns].to_numpy(dtype=float)
@@ -95,12 +98,31 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
         mask = (selected_e_col == e_col) & has_valid
         raw_e[mask] = scores[e_col].to_numpy(dtype=float)[mask]
 
+    # Same for the per-pair sample count after pairwise missing-value removal
+    raw_n          = np.full(len(scores), np.nan)
+    selected_n_col = np.array([p_col_to_n[c] for c in selected_p_col])
+    for n_col in np.unique(selected_n_col):
+        mask = (selected_n_col == n_col) & has_valid
+        raw_n[mask] = scores[n_col].to_numpy(dtype=float)[mask]
+
     scores_final['raw-P']     = raw_p
     scores_final['raw-E']     = raw_e
     scores_final['test_type'] = test_names
+    scores_final['n']         = raw_n
 
     scores_final = scores_final.drop_duplicates(subset=['label1', 'label2', 'test_type'], keep='first')
     logging.info("Finished selecting raw p-values and effect sizes for each association.")
+
+    # Pairs tested on fewer than n_min_valid samples are treated as untested: their raw-P is set
+    # to NaN *before* the FDR correction so they are not part of the correction family, and
+    # compute_context_scores then drops them (reason 'low_n'). The differential step's
+    # reconciliation removes them from the other context as well.
+    low_n = (scores_final['n'] < n_min_valid).to_numpy() & scores_final['raw-P'].notna().to_numpy()
+    scores_final['low_n'] = low_n
+    scores_final.loc[low_n, 'raw-P'] = np.nan
+    if low_n.any():
+        logging.warning(f"{int(low_n.sum())} pair(s) were tested on fewer than n_min_valid={n_min_valid} "
+                        f"samples and will be excluded.")
 
     # Single multiple-testing correction across ALL edges (all test types pooled into one FDR
     # family), rather than napy's per-test-call correction. Applied on the deduplicated edges so
@@ -116,7 +138,7 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
                            test_type: str = 'nonparametric',
                            correction: str = 'bh', num_workers: int = 1,
                            path: Optional[str] = None, nan_value: Optional[float] = None,
-                           name: str = 'context1') -> pd.DataFrame:
+                           name: str = 'context1', n_min_valid: int = 10) -> pd.DataFrame:
     """
     Compute association scores for a given context.
 
@@ -128,6 +150,7 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     :param path: Optional path to save the computed scores as a CSV file. Defaults to None.
     :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
     :param name: Name of the context. Used for saving files. Defaults to 'context'.
+    :param n_min_valid: Minimum number of samples (after pairwise removal of missing values) a pairwise test must be based on. Pairs below this are excluded from this context's network (and, during differential analysis, from the other context's as well). Defaults to 10.
     :return: A pd.DataFrame containing the computed association scores.
     """
     # Check nan values and input format
@@ -144,25 +167,27 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     # Calculate scores
     scores = calculate_association_scores(ord_data=ord, nom_data=nom, cont_data=cont, bi_data=bi,
                                           test_type=test_type, num_workers=num_workers, nan_value=nan_value,
-                                          correction=correction)
+                                          correction=correction, n_min_valid=n_min_valid)
 
-    # Convert Cohen's d -> point-biserial r for ttest edges using actual binary group sizes.
+    # Convert Cohen's d -> point-biserial r for ttest edges, using the binary group sizes of each
+    # specific pair after pairwise removal of missing values (the samples the t-test actually
+    # used). Counting groups over the whole binary column instead would bias r whenever the
+    # continuous partner's missingness differs between the two groups.
     # label1 is the binary variable at this point (before the min/max label sort below).
-    if test_type == 'parametric' and (scores['test_type'] == 'ttest').any():
-        for bi_col in bi.columns:
-            col_vals = bi[bi_col].to_numpy(dtype=float)
-            valid_vals = col_vals[col_vals != nan_value]
-            unique_vals = np.unique(valid_vals)
-            if len(unique_vals) != 2:
-                continue
-            n_g1 = int(np.sum(valid_vals == unique_vals[0]))
-            n_g2 = int(np.sum(valid_vals == unique_vals[1]))
-            if n_g1 == 0 or n_g2 == 0:
-                continue
-            correction_factor = (n_g1 + n_g2) ** 2 / (n_g1 * n_g2)
-            mask = (scores['test_type'] == 'ttest') & (scores['label1'] == bi_col)
-            d = scores.loc[mask, 'raw-E'].to_numpy()
-            scores.loc[mask, 'raw-E'] = d / np.sqrt(d ** 2 + correction_factor)
+    ttest_mask = (scores['test_type'] == 'ttest').to_numpy()
+    if test_type == 'parametric' and ttest_mask.any():
+        n_g1, n_g2 = _pairwise_group_sizes(bi, cont, nan_value)
+        bi_idx = pd.Index(bi.columns).get_indexer(scores.loc[ttest_mask, 'label1'])
+        cont_idx = pd.Index(cont.columns).get_indexer(scores.loc[ttest_mask, 'label2'])
+        assert (bi_idx >= 0).all() and (cont_idx >= 0).all(), "ttest rows must be (binary, continuous) pairs."
+        n1 = n_g1[bi_idx, cont_idx]
+        n2 = n_g2[bi_idx, cont_idx]
+        d = scores.loc[ttest_mask, 'raw-E'].to_numpy(dtype=float)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            correction_factor = (n1 + n2) ** 2 / (n1 * n2)
+            r = d / np.sqrt(d ** 2 + correction_factor)
+        # An empty group leaves r undefined -> NaN, so the pair is dropped below
+        scores.loc[ttest_mask, 'raw-E'] = np.where((n1 > 0) & (n2 > 0), r, np.nan)
 
     # Sort
     l1 = scores[['label1', 'label2']].min(axis=1)
@@ -183,11 +208,16 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     # real weak/null association downstream. 'test_type' is only ever missing when raw-P is NaN
     # (both driven by the same has_valid check in calculate_association_scores), so any row that
     # survives this drop already has a real, non-null test_type -- no fallback assignment needed.
+    # Pairs tested on fewer than n_min_valid samples (raw-P already set to NaN in
+    # calculate_association_scores) are dropped the same way, with reason 'low_n'.
     scores_na_mask = scores['raw-P'].isna() | scores['raw-E'].isna()
-    scores_na = scores.loc[scores_na_mask, ['label1', 'label2', 'test_type']].copy()
-    scores = scores.loc[~scores_na_mask].reset_index(drop=True)
+    scores_na = scores.loc[scores_na_mask, ['label1', 'label2', 'test_type', 'n']].copy()
+    scores_na['reason'] = np.where(scores.loc[scores_na_mask, 'low_n'], 'low_n', 'napy_nan')
+    scores = scores.loc[~scores_na_mask].drop(columns='low_n').reset_index(drop=True)
 
-    logging.info(f"Dropped {len(scores_na)} pair(s) where NApy could not compute a valid test result.")
+    n_low = int((scores_na['reason'] == 'low_n').sum())
+    logging.info(f"Dropped {len(scores_na) - n_low} pair(s) where NApy could not compute a valid test result "
+                 f"and {n_low} pair(s) tested on fewer than n_min_valid={n_min_valid} samples.")
 
     # Precompute p-value transforms (log-P = -log10(p), inv-P = 1 - p) used by the
     # differential edge/node metrics. Safe now that every remaining row has a real 'raw-P'.
@@ -231,7 +261,7 @@ def napy_bi_nom(nom_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_w
         return [None]
 
     output = napy.chi_squared(discrete_phenotypes, axis=1, threads=num_workers, nan_value=nan_value, use_numba=False,
-                              return_types=['p_unadjusted', TEST_EFFECT_SIZES['chi2']])
+                              return_types=['p_unadjusted', TEST_EFFECT_SIZES['chi2'], 'n'])
     results = _napy_formatting(output, [cols], 'chi2')
     assert results is not None, "Results should not be None here."
 
@@ -251,13 +281,13 @@ def napy_nom_cont(cont_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, t
     if test == 'parametric':
         result = napy.anova(cat_data=nom_phenotypes, cont_data=cont_phenotypes, axis=1,
                                       threads=num_workers, nan_value=nan_value,
-                                      return_types=['p_unadjusted', TEST_EFFECT_SIZES['anova']])
+                                      return_types=['p_unadjusted', TEST_EFFECT_SIZES['anova'], 'n'])
         done_test = "anova"
 
     elif test == 'nonparametric':
         result = napy.kruskal_wallis(cat_data=nom_phenotypes, cont_data=cont_phenotypes, axis=1,
                                                threads=num_workers, nan_value=nan_value,
-                                               return_types=['p_unadjusted', TEST_EFFECT_SIZES['kruskal']])
+                                               return_types=['p_unadjusted', TEST_EFFECT_SIZES['kruskal'], 'n'])
         done_test = "kruskal"
 
     else:
@@ -275,7 +305,7 @@ def napy_ord_nom(ord_phenotypes: pd.DataFrame, nom_phenotypes: pd.DataFrame, num
 
     result = napy.kruskal_wallis(cat_data=nom_phenotypes, cont_data=ord_phenotypes, axis=1,
                                             threads=num_workers, nan_value=nan_value,
-                                            return_types=['p_unadjusted', TEST_EFFECT_SIZES['kruskal']])
+                                            return_types=['p_unadjusted', TEST_EFFECT_SIZES['kruskal'], 'n'])
     done_test = "kruskal"
 
     return [_napy_formatting(result, [nom_cols, ord_cols], done_test)]
@@ -294,7 +324,7 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
     if test == 'parametric':
         result = napy.ttest(bin_data=bi_phenotypes_two, cont_data=cont_phenotypes, axis=1,
                                      threads=num_workers, nan_value=nan_value,
-                                     return_types=['p_unadjusted', TEST_EFFECT_SIZES['ttest']])
+                                     return_types=['p_unadjusted', TEST_EFFECT_SIZES['ttest'], 'n'])
         # NApy (napypi 1.1.9) computes the t-test as group0 - group1, the opposite of the usual
         # group1 - group0 convention: both its 't' and its 'cohens_d' come back negated (verified
         # against scipy/manual -- magnitudes agree to 4+ decimals, sign is exactly -1x, and the
@@ -313,7 +343,7 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
 
     elif test == 'nonparametric':
         result = napy.mwu(bin_data=bi_phenotypes_two, cont_data=cont_phenotypes, axis=1, threads=num_workers,
-                                   nan_value=nan_value, return_types=['p_unadjusted', TEST_EFFECT_SIZES['mwu']])
+                                   nan_value=nan_value, return_types=['p_unadjusted', TEST_EFFECT_SIZES['mwu'], 'n'])
         done_test = "mwu"
 
     else:
@@ -332,7 +362,7 @@ def napy_bi_ord(ord_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, num_w
     bi_phenotypes_two, bi_cols = _df_to_numpy(bi_phenotypes)
 
     result = napy.mwu(bin_data=bi_phenotypes_two, cont_data=ord_phenotypes, axis=1, threads=num_workers,
-                                nan_value=nan_value, return_types=['p_unadjusted', TEST_EFFECT_SIZES['mwu']])
+                                nan_value=nan_value, return_types=['p_unadjusted', TEST_EFFECT_SIZES['mwu'], 'n'])
     done_test = "mwu"
 
     results = [_napy_formatting(result, [bi_cols, ord_cols], done_test)]
@@ -350,12 +380,12 @@ def napy_cont_cont(cont_phenotypes: pd.DataFrame, test: str='nonparametric', num
 
     if test == 'parametric':
         result = napy.pearsonr(cont_phenotypes, nan_value=nan_value, threads=num_workers,
-                                    axis=1, return_types=['p_unadjusted', TEST_EFFECT_SIZES['pearson']])
+                                    axis=1, return_types=['p_unadjusted', TEST_EFFECT_SIZES['pearson'], 'n'])
         done_test = "pearson"
 
     elif test == 'nonparametric':
         result = napy.spearmanr(cont_phenotypes, threads=num_workers, nan_value=nan_value,
-                                     axis=1, return_types=['p_unadjusted', TEST_EFFECT_SIZES['spearman']])
+                                     axis=1, return_types=['p_unadjusted', TEST_EFFECT_SIZES['spearman'], 'n'])
         done_test = "spearman"
 
     else:
@@ -375,7 +405,7 @@ def napy_ord_cont(cont_phenotypes: pd.DataFrame, ord_phenotypes: pd.DataFrame, n
     ord_phenotypes, ord_cols = _df_to_numpy(ord_phenotypes)
 
     result = napy.spearmanr(combined_phenotypes, threads=num_workers, nan_value=nan_value, axis=1,
-                            return_types=['p_unadjusted', TEST_EFFECT_SIZES['spearman']])
+                            return_types=['p_unadjusted', TEST_EFFECT_SIZES['spearman'], 'n'])
     done_test = "spearman"
 
     return [_napy_formatting(result, [combined_cols], done_test, ord_cols=ord_cols.tolist(), cont_cols=cont_cols.tolist())]
@@ -507,6 +537,29 @@ def _drop_single_category_variables(ord, nom, bi, cont, nan_value):
     return ord, nom, bi, cont, const_vars
 
 
+def _pairwise_group_sizes(bi: pd.DataFrame, cont: pd.DataFrame, nan_value) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Per (binary, continuous) pair, count the samples in each of the two binary groups for which
+    both variables are observed, i.e. the group sizes left after pairwise removal of missing values.
+
+    :return: Two (n_binary x n_continuous) arrays with the sizes of the lower- and higher-coded group.
+    """
+    bi_vals = bi.to_numpy(dtype=float)
+    observed_cont = (cont.to_numpy(dtype=float) != nan_value).astype(float)
+
+    group1 = np.zeros_like(bi_vals)
+    group2 = np.zeros_like(bi_vals)
+    for j in range(bi_vals.shape[1]):
+        col = bi_vals[:, j]
+        levels = np.unique(col[col != nan_value])
+        if len(levels) != 2:
+            continue  # leaves both groups empty -> r is set to NaN by the caller
+        group1[:, j] = col == levels[0]
+        group2[:, j] = col == levels[1]
+
+    return group1.T @ observed_cont, group2.T @ observed_cont
+
+
 def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str, 
                      ord_cols: Optional[list] = None, cont_cols: Optional[list] = None, 
                      file_name: Optional[str] = None) -> Optional[pd.DataFrame]:
@@ -535,6 +588,8 @@ def _napy_formatting(assoc_out: dict[np.array], labels: list, test: str,
         'label2': label2,
         **{p_columns[i]: p_values_raw[key] for i, key in enumerate(p_values_raw)},
         **{e_columns[i]: effects_raw[key] for i, key in enumerate(effects_raw)},
+        # Number of samples left for this pair after NApy's pairwise removal of missing values.
+        f"{test}_n": assoc_out['n'][rows_idx, cols_idx].ravel(),
     })
 
     if ord_cols is not None and cont_cols is not None:

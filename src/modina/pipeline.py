@@ -14,7 +14,7 @@ import pandas as pd
 def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: Optional[str] = None, node_metric: Optional[str] = None, ranking_alg: str = 'PageRank+',
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None, filter_target: Optional[str] = None, max_path_length: int=2,
                      test_type: str = 'nonparametric', nan_value: Optional[int] = None,
-                     correction: str = 'bh', num_workers: int=1,
+                     correction: str = 'bh', num_workers: int=1, n_min_valid: int = 10,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2'):
     """
     Wrapper function to perform an end-to-end differential network analysis following the moDiNA pipeline.
@@ -26,6 +26,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param num_workers: Number of workers for parallel processing. Defaults to 1.
+    :param n_min_valid: Minimum number of samples (after pairwise removal of missing values) a pairwise association test must be based on. Edges below this in either context are removed from both. Defaults to 10.
     :param filter_method: Method used for filtering. Defaults to None.
     :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
     :param filter_metric: Edge metric used for filtering. Only used when filter_target is 'context-specific'. Defaults to None.
@@ -52,9 +53,11 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     # Score calculation
     logging.info('Computing association scores...')
     scores1 = compute_context_scores(context_data=context1, meta_file=meta_file, test_type=test_type, correction=correction,
-                                     num_workers=num_workers, path=project_path, name=name1, nan_value=nan_value)
+                                     num_workers=num_workers, path=project_path, name=name1, nan_value=nan_value,
+                                     n_min_valid=n_min_valid)
     scores2 = compute_context_scores(context_data=context2, meta_file=meta_file, test_type=test_type, correction=correction,
-                                     num_workers=num_workers, path=project_path, name=name2, nan_value=nan_value)
+                                     num_workers=num_workers, path=project_path, name=name2, nan_value=nan_value,
+                                     n_min_valid=n_min_valid)
     logging.info('Done.')
 
     if filter_target is not None:
@@ -118,6 +121,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         'name2': name2,
         'test_type': test_type,
         'correction':  correction,
+        'n_min_valid': n_min_valid,
         'filter_method': filter_method,
         'filter_metric': filter_metric,
         'filter_rule': filter_rule,

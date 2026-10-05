@@ -7,6 +7,8 @@ from typing import Optional, Tuple
 
 
 # Convert Cohen's d to point-biserial r for ttest edges.
+# Note: uses one (n1, n2) for all edges, ignoring pairwise missingness; compute_context_scores
+# already converts with the exact per-pair group sizes, so this is only for external callers.
 # Uses context sample sizes to account for unequal groups:
 # equal sizes (n1==n2): r = d / sqrt(d² + 4)
 # unequal sizes:        r = d / sqrt(d² + (n1+n2)² / (n1*n2))
@@ -174,9 +176,9 @@ def find_flagged_variables(scores1: pd.DataFrame, scores2: pd.DataFrame) -> list
 # Two independent things can make a pair (label1, label2) present in only one context's scores:
 # (1) a variable flagged as single-category/entirely-missing in one context (dropped from that
 #     context's network entirely, see context_net_inference._drop_single_category_variables), or
-# (2) NApy returning NaN for that specific pair in one context (dropped individually, see
-#     compute_context_scores' scores_na handling) even though the same pair tested fine in the
-#     other context.
+# (2) NApy returning NaN for that specific pair in one context, or the pair having been tested on
+#     fewer than n_min_valid samples there (both dropped individually, see compute_context_scores'
+#     scores_na handling) even though the same pair tested fine in the other context.
 # Both leave scores1/scores2 with a mismatched, un-aligned set of rows, which breaks every
 # downstream step that assumes they're row-aligned (e.g. _subtract_edges, probit_rescaling). An
 # inner merge on (label1, label2, test_type) fixes both at once: any pair missing from either
@@ -225,8 +227,8 @@ def reconcile_flagged_variables(scores1: pd.DataFrame, scores2: pd.DataFrame,
 
     if flagged or n_pairs_dropped:
         logging.warning(f'Reconciling the two contexts\' networks: {n_pairs_dropped} pair(s) present in only '
-                        f'one context (either a variable flagged there, or NApy returning NaN for that specific '
-                        f'pair) were dropped from both. {len(flagged)} variable(s) now have no edges left in '
+                        f'one context (either a variable flagged there, or NApy returning NaN / fewer than n_min_valid '
+                        f'samples for that specific pair) were dropped from both. {len(flagged)} variable(s) now have no edges left in '
                         f'either context: {flagged}.')
         if path is not None:
             pd.DataFrame({'label': flagged}).to_csv(os.path.join(path, 'flagged_variables_removed.csv'), index=False)

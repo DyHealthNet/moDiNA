@@ -286,6 +286,10 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
      - ``integer``
      - ``-89``
      - Sentinel value in input data that represents missing / NA values.
+   * - ``diff_net_analysis.n_min_valid``
+     - ``integer``
+     - ``10``
+     - Minimum number of samples (after pairwise removal of missing values) a pairwise association test must be based on. Edges below this in either context are removed from both.
    * - ``diff_net_analysis.multiple_testing``
      - ``string``
      - ``'bh'``
