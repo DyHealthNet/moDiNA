@@ -244,16 +244,16 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
      - Path to the CSV samplesheet listing moDiNA configurations to run. Required when ``run_type = 'file'``. Columns: ``node_metric``, ``edge_metric``, ``ranking_algorithm``.
    * - ``diff_net_analysis.node_metric``
      - ``string``
-     - ``'STC'``
-     - Node-level differential metric. Used when ``run_type = 'single'``. One of: ``STC``, ``DC-P``, ``DC-E``, ``WDC-P``, ``WDC-L-P``, ``WDC-E``, ``PRC-P``, ``PRC-L-P``, ``PRC-E``, ``None``.
+     - ``'STC-P'``
+     - Node-level differential metric. Used when ``run_type = 'single'``. One of: ``WDC-<score>``, ``PRC-<score>`` or ``STC-<score>`` with score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE``, ``LPxVE`` (e.g. ``STC-P``), the capped variants ``<family>-LPxRE-cap`` / ``<family>-LPxVE-cap`` (require ``lp_cap``), or ``None``.
    * - ``diff_net_analysis.edge_metric``
      - ``string``
-     - ``'diff-E'``
-     - Edge-level differential metric. Used when ``run_type = 'single'``. One of: ``diff-P``, ``diff-E``, ``diff-T-E`` (difference of r²-transformed effect sizes, an absolute-scale alternative to ``diff-E``'s rank-based rescaling), ``diff-L-P`` (difference of -log10(p-values) between contexts), ``diff-L-PE`` (difference of -log10(p) × rescaled effect size), ``sum-diff-PE``, ``sum-diff-L-PE``, ``None``.
+     - ``'diff-LPxRE'``
+     - Edge-level differential metric. Used when ``run_type = 'single'``. One of: ``diff-P``, ``diff-LP``, ``diff-RE``, ``diff-VE``, ``diff-LPxRE``, ``diff-LPxVE``, ``sum-LP-VE``, ``sum-LP-RE``, the capped variants ``diff-LPxRE-cap`` / ``diff-LPxVE-cap`` (require ``lp_cap``), or ``None``. See the score definitions in the Python package documentation.
    * - ``diff_net_analysis.ranking_algorithm``
      - ``string``
      - ``'PageRank+'``
-     - Algorithm used to rank nodes and edges in the differential network. Used when ``run_type = 'single'``. One of: ``PageRank+``, ``PageRank``, ``absDimontRank``, ``DimontRank``, ``direct_node``, ``direct_edge``.
+     - Algorithm used to rank nodes and edges in the differential network. Used when ``run_type = 'single'``. One of: ``PageRank+``, ``PageRank``, ``MeanEdgeRank``, ``MedianEdgeRank``, ``nodeRank``, ``MeanProductRank``, ``MedianProductRank``. Configurations combining a node and an edge metric (``PageRank+``, ``MeanProductRank``, ``MedianProductRank``) are skipped with a warning if one metric uses the RE and the other the VE effect-size rescaling.
    * - ``diff_net_analysis.filter_method``
      - ``string``
      - ``''``
@@ -268,16 +268,16 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
      - Which network to filter. Leave empty to skip filtering. ``context-specific`` filters the two context networks before differential analysis (using ``filter_metric`` and ``filter_rule``); ``differential`` filters the differential network on the computed ``edge_metric`` (``filter_metric`` and ``filter_rule`` are ignored). When set, ``filter_method`` is required.
    * - ``diff_net_analysis.filter_metric``
      - ``string``
-     - ``'pre-P'``
+     - ``'raw-P'``
      - Edge score used as the basis for filtering. One of: ``raw-P``, ``rescaled-E``. Required when ``filter_method`` is set and ``filter_target`` is ``context-specific``.
    * - ``diff_net_analysis.filter_rule``
      - ``string``
      - ``'zero'``
      - Rule applied when filtering edges. One of: ``zero`` (set filtered edges to zero), ``union`` (keep edges present in at least one context). Required when ``filter_method`` is set and ``filter_target`` is ``context-specific``.
-   * - ``diff_net_analysis.max_path_length``
-     - ``integer``
-     - ``2``
-     - Maximum path length used for the ``int-IS`` edge metric. Must be an integer in [0, 4]. Only relevant when ``int-IS`` is selected as an edge metric.
+   * - ``diff_net_analysis.lp_cap``
+     - ``float``
+     - ``null``
+     - Cap for -log10(p) in the LP × effect-size product metrics. When set, every configuration with a product metric (``*-LPxRE``, ``*-LPxVE``) is run twice: uncapped and with the capped variant (``*-LPxRE-cap``, ``*-LPxVE-cap``), in which -log10(p) is limited to ``lp_cap`` so that above the cap only the effect size carries the signal. Other metrics are unaffected. Leave empty for no cap.
    * - ``diff_net_analysis.test_type``
      - ``string``
      - ``'nonparametric'``

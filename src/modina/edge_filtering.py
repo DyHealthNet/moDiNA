@@ -249,8 +249,8 @@ def filter_differential(edges_diff: pd.DataFrame, edge_metric: str,
     no per-context integration ('filter_rule') and no p-value-vs-effect-size choice
     ('filter_metric'): filtering always operates on the provided edge_metric.
 
-    :param edges_diff: Differential edge scores with columns 'label1', 'label2', 'test_type',
-                       edge_metric and edge_metric + '_signed'.
+    :param edges_diff: Differential edge scores with columns 'label1', 'label2', 'test_type' and
+                       edge_metric.
     :param edge_metric: Name of the (absolute) differential edge-metric column to filter on.
     :param filter_method: Method used for filtering ('degree' or 'density'). Defaults to None.
     :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.

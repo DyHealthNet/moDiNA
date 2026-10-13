@@ -1,3 +1,4 @@
+from collections import Counter
 from typing import Optional
 import logging
 import numpy as np
@@ -10,15 +11,21 @@ import os
 # Minimum number of samples expected in a discrete node's rarest level before its association
 # estimates become noise-dominated. Below this, tightening the base-rate bounds does not help:
 # with 36 samples per context, ~7% of binary ground truth edges are undetectable even at a
-# perfectly balanced p=0.5, versus ~7.5% at binary_p_low=0.3.
+# perfectly balanced p=0.5, versus ~7.5% at _BINARY_P_LOW=0.3.
 _MIN_MINORITY_COUNT = 20
 
-# Ceiling on a hub node's running sum(magnitude**2) across its correlation edges. A node that is
-# reused as a "hub" -- correlated to several independent leaves that are never themselves reused --
-# forms a star, and a star's correlation matrix is positive definite iff that sum stays below 1
-# (the Schur-complement condition for a hub with pairwise-independent leaves). Staying a bit under
-# the true ceiling avoids a matrix that is technically valid but singular in floating point.
-_HUB_SUMSQ_CEILING = 0.95
+# Marginal shapes. These are fixed rather than exposed because they are not a factor the benchmark
+# varies: they only exist to keep the discretisation from eating the planted effects. The maximum
+# attainable association between two discretised variables is capped by their marginals, so a binary
+# base rate far from 0.5, or an ordinal category left nearly empty, attenuates every edge touching
+# that node regardless of the magnitude recorded in the ground truth. Binary base rates are drawn
+# uniformly from [_BINARY_P_LOW, _BINARY_P_HIGH]; ordinal category probabilities from a symmetric
+# Dirichlet with concentration _ORDINAL_CONCENTRATION (1.0 would be uniform over all splits and
+# routinely leaves categories nearly empty; 20 keeps them near-balanced).
+_BINARY_P_LOW = 0.3
+_BINARY_P_HIGH = 0.7
+_ORDINAL_CONCENTRATION = 20.0
+_N_ORDINAL_CATEGORIES = 5
 
 # Hard clip applied when a planted magnitude is added on top of a background value. Only reachable
 # with a strong background and a large `corr_high` simultaneously; it exists so the result is never
@@ -40,12 +47,11 @@ _BACKGROUND_LOAD_BRACKET = (1e-4, 1e3)
 _BACKGROUND_LOAD_ITERS = 60
 
 
-def _background_edges(n_vars, topology, density, rng):
-    """Draw the sparse wiring that the background is built from.
+def _background_edges(n_vars, density, rng):
+    """Draw the sparse scale-free wiring that the background is built from.
 
     Returns a list of (i, j) index pairs with i < j. `density` is the number of connections each
-    newly added node makes; both generators produce the same edge count so the two topologies are
-    comparable at equal density.
+    newly added node makes.
     """
     if density < 1:
         raise ValueError(f'background_density must be at least 1, got {density}.')
@@ -53,33 +59,20 @@ def _background_edges(n_vars, topology, density, rng):
         raise ValueError(f'background_density ({density}) must be smaller than the number of '
                          f'variables ({n_vars}).')
 
-    if topology == 'scale_free':
-        # Barabasi-Albert preferential attachment: each new node attaches to `density` existing
-        # nodes chosen with probability proportional to their current degree. The rich-get-richer
-        # feedback is what produces hubs -- they emerge from the growth rule, not from a parameter.
-        edges = [(i, j) for i in range(density) for j in range(i + 1, density)]
-        repeated = [end for edge in edges for end in edge] or list(range(density))
-        for src in range(density, n_vars):
-            targets = []
-            while len(targets) < density:
-                candidate = int(rng.choice(repeated))
-                if candidate not in targets:
-                    targets.append(candidate)
-            edges.extend((min(src, t), max(src, t)) for t in targets)
-            repeated.extend(targets + [src] * density)
-        return edges
-
-    if topology == 'erdos_renyi':
-        # Uniformly random wiring at the same edge count: no hubs, degrees concentrated around the
-        # mean. Useful as a null topology to check that a result is driven by hub structure rather
-        # than by density alone.
-        all_pairs = [(i, j) for i in range(n_vars) for j in range(i + 1, n_vars)]
-        n_edges = min(len(all_pairs), n_vars * density - density * (density + 1) // 2)
-        picked = rng.choice(len(all_pairs), size=n_edges, replace=False)
-        return [all_pairs[i] for i in sorted(picked)]
-
-    raise ValueError(f"background_topology must be None, 'scale_free' or 'erdos_renyi', "
-                     f"got {topology!r}.")
+    # Barabasi-Albert preferential attachment: each new node attaches to `density` existing
+    # nodes chosen with probability proportional to their current degree. The rich-get-richer
+    # feedback is what produces hubs -- they emerge from the growth rule, not from a parameter.
+    edges = [(i, j) for i in range(density) for j in range(i + 1, density)]
+    repeated = [end for edge in edges for end in edge] or list(range(density))
+    for src in range(density, n_vars):
+        targets = []
+        while len(targets) < density:
+            candidate = int(rng.choice(repeated))
+            if candidate not in targets:
+                targets.append(candidate)
+        edges.extend((min(src, t), max(src, t)) for t in targets)
+        repeated.extend(targets + [src] * density)
+    return edges
 
 
 def _background_sigma(n_vars, edges, signs, load):
@@ -101,12 +94,10 @@ def _background_sigma(n_vars, edges, signs, load):
     return cov / np.outer(scale, scale)
 
 
-def _build_background(n_vars, topology, strength, density, seed):
-    """Build a dense background correlation matrix from a sparse network.
+def _build_background(n_vars, strength, density, seed):
+    """Build a dense background correlation matrix from a sparse scale-free network.
 
-    Returns (sigma_base, edges, lambda_min). With `topology=None` this is the identity, an empty
-    edge list and lambda_min 1.0 -- i.e. exactly the historical "no background" behaviour, and the
-    rest of the simulation is unchanged.
+    Returns (sigma_base, edges, lambda_min).
 
     `strength` is a target on the OUTPUT (mean |r| over directly-wired pairs), not an input, because
     the entries of Omega have no interpretable scale on their own: what a given Omega entry produces
@@ -114,23 +105,27 @@ def _build_background(n_vars, topology, strength, density, seed):
     diagonal loading that hits the target is found by bisection, which is valid because strength is
     strictly decreasing in the loading.
     """
-    if topology is None:
-        return np.eye(n_vars), [], 1.0
     if not 0.0 < strength < 1.0:
         raise ValueError(f'background_strength must lie strictly between 0 and 1, got {strength}.')
 
     # A dedicated Generator, never the global `random`/`np.random` streams the rest of the
-    # simulation draws from. Turning the background on therefore does not shift any downstream
-    # draw: the same seed plants the same edges with the same magnitudes either way.
+    # simulation draws from. Changing the background parameters therefore does not shift any
+    # downstream draw: the same seed plants the same edges with the same magnitudes either way.
     rng = np.random.default_rng(seed)
-    edges = _background_edges(n_vars, topology, density, rng)
+    edges = _background_edges(n_vars, density, rng)
     signs = rng.choice([-1.0, 1.0], size=len(edges))
+    # Preferential attachment makes the earliest-added nodes the hubs, but node index is not
+    # neutral: it runs continuous, then binary, then ordinal, and the first nodes of each type are
+    # the ones planted with ground truth. Relabel the grown network at random so that being a
+    # background hub is independent of both type and ground truth status.
+    perm = rng.permutation(n_vars)
+    edges = [(int(min(perm[a], perm[b])), int(max(perm[a], perm[b]))) for a, b in edges]
 
     def wired_mean(load):
         sigma = _background_sigma(n_vars, edges, signs, load)
         return float(np.mean([abs(sigma[a, b]) for a, b in edges]))
 
-    # Strength is bounded above by the topology: denser wiring forces a larger diagonal, which
+    # Strength is bounded above by the wiring: denser wiring forces a larger diagonal, which
     # dilutes every correlation. Requesting more than the ceiling is unsatisfiable at any loading,
     # and a plain bisection would silently return the bracket edge instead of saying so.
     low, high = _BACKGROUND_LOAD_BRACKET
@@ -152,6 +147,39 @@ def _build_background(n_vars, topology, strength, density, seed):
     return sigma_base, edges, float(np.linalg.eigvalsh(sigma_base).min())
 
 
+def _plan_hub_reuse(edge_types, hub_reuse_prob):
+    """Decide up front which planted edges reuse an existing node as a hub, and of which type.
+
+    `edge_types` lists the (type, type) of every planted edge in planting order. Returns a list of
+    the same length holding the node-type prefix whose existing node the edge should attach to, or
+    None for an ordinary fresh pair.
+
+    Every reuse collapses one would-be fresh endpoint onto an existing node, so it removes one
+    ground truth node of the hub's type. Deciding per edge by coin flip makes that count random,
+    and with it the number of ground truth nodes per type. Instead, each pair type reuses exactly
+    round(hub_reuse_prob * n_edges) of its edges, at random positions, and a cross-type reuse goes
+    to whichever of its two types has collapsed the smaller share of its endpoints so far. Every
+    type therefore loses the same share of its endpoints to hubs; with equal counts per type, the
+    ground truth node counts per type agree to within one.
+    """
+    endpoints = Counter(t for pair in edge_types for t in pair)
+    reuses = Counter()
+    plan = [None] * len(edge_types)
+    positions = {}
+    for i, pair in enumerate(edge_types):
+        positions.setdefault(pair, []).append(i)
+    # Same-type pairs first: their hub type is forced, so the cross types can balance around them.
+    for pair in sorted(positions, key=lambda pair: pair[0] != pair[1]):
+        idx = positions[pair]
+        for i in sorted(random.sample(idx, int(hub_reuse_prob * len(idx) + 0.5))):
+            a, b = pair
+            share_a, share_b = reuses[a] / endpoints[a], reuses[b] / endpoints[b]
+            hub_type = a if share_a < share_b or (share_a == share_b and random.random() < 0.5) else b
+            plan[i] = hub_type
+            reuses[hub_type] += 1
+    return plan
+
+
 # Simulate mixed data using a gaussian copula 
 def simulate_copula(path=None, name1='context1', name2='context2',
                     n_bi=50, n_cont=50, n_cat=50, n_samples_1=500, n_samples_2=500,
@@ -160,9 +188,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                     n_both_cont_cont=0, n_both_bi_bi=0, n_both_cat_cat=0, n_both_bi_cont=0, n_both_bi_cat=0, n_both_cont_cat=0,
                     *, corr_low, corr_high, shift_low, shift_high,
                     hub_reuse_prob=0.0,
-                    background_topology=None, background_strength=0.2, background_density=2,
-                    background_seed=None,
-                    binary_p_low=0.3, binary_p_high=0.7, ordinal_concentration=20.0):
+                    background_strength=0.2, background_density=2, background_seed=None):
     """
     Simulate two contexts with binary and continuous nodes using a Gaussian copula.
     
@@ -201,51 +227,40 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                       reason as `corr_low`/`corr_high`. Required.
     :param shift_high: Upper bound of the mean-shift magnitude range. Must satisfy
                        `shift_low <= shift_high`. Required.
-    :param hub_reuse_prob: Probability that a new correlation/both pair reuses an already-placed
-                           node as one endpoint ("hub") instead of drawing two fresh nodes. Real
-                           differential networks concentrate rewiring on a few hub nodes rather than
-                           a perfect matching. When it fires, exactly one of the pair's two slots is
-                           filled by a node that already has at least one edge; the other slot is
-                           always a fresh node, and that fresh node -- plus the hub's original first
-                           partner, the first time the hub is reused -- is permanently barred from
-                           ever being reused itself. This keeps every hub isolated from every other
-                           hub, which is what makes the one cheap check below exact: a reuse is only
-                           committed if the hub's running sum of its edges' magnitude**2 stays below
-                           `_HUB_SUMSQ_CEILING` (0.95); otherwise it is abandoned and a fresh pair is
-                           drawn instead, silently, with no shrinking or retry. Default 0.0
-                           reproduces the historical one-edge-per-node behaviour exactly.
-    :param binary_p_low: Lower bound of the base rate drawn per binary node. How strongly two binary
-                         variables can correlate is capped by how balanced they are, so a rare node
-                         attenuates the correlation difference actually realised on its edges. Widen
-                         this range for more marginal variety, at the cost of less comparable effect
-                         sizes across edges. Use 0.0/1.0 for the historical behaviour.
-    :param background_topology: Wiring used to build the background correlation structure, or None
-                                (default) for the historical behaviour in which every pair that was
-                                not deliberately planted is exactly independent. 'scale_free' grows
-                                the network by preferential attachment, producing a few high-degree
-                                hubs and a heavy-tailed degree distribution; 'erdos_renyi' wires the
-                                same number of edges uniformly at random, producing no hubs. The
-                                background is built ONCE and shared by both contexts, so every pair
-                                that is not planted has bit-identical correlation in the two
-                                contexts and the negatives stay exactly null.
+    :param hub_reuse_prob: Fraction of each pair type's correlation/both pairs that reuse an
+                           already-placed node as one endpoint ("hub") instead of drawing two fresh
+                           nodes. Real differential networks concentrate rewiring on a few hub nodes
+                           rather than a perfect matching. The count per pair type is fixed at
+                           round(hub_reuse_prob * n_pairs) rather than drawn per edge, and cross-type
+                           reuses are spread so every node type loses the same share of its endpoints
+                           to hubs (see `_plan_hub_reuse`); this keeps the number of ground truth
+                           nodes per type consistent across replicates and types. A reused hub is
+                           picked at random among the eligible nodes of its type whose running
+                           sum(magnitude**2) stays below the background's lambda_min**2. A reuse
+                           only ever fills one slot of a pair; the other is always a fresh node, and
+                           that fresh node -- plus the hub's original first partner, the first time
+                           the hub is reused -- is permanently barred from ever being reused itself.
+                           This keeps every hub isolated from every other hub, which is what makes
+                           the sum(magnitude**2) check exact. If no eligible hub exists yet, the
+                           reuse is deferred to the next fresh pair of the same pair type. Default
+                           0.0 gives one edge per node.
+    The background correlation structure is always a sparse scale-free network (preferential
+    attachment, producing a few high-degree hubs and a heavy-tailed degree distribution), turned
+    into a dense correlation matrix. It is built ONCE and shared by both contexts, so every pair
+    that is not planted has bit-identical correlation in the two contexts and the negatives stay
+    exactly null.
     :param background_strength: Target mean |r| over the directly-wired pairs of the background.
                                 This is a property of the resulting correlation matrix, not a value
                                 written anywhere: the diagonal loading that attains it is solved for
                                 by bisection. It is bounded above by the topology (denser wiring
                                 forces weaker correlations); an unreachable request raises with the
-                                attainable ceiling. Ignored when background_topology is None.
+                                attainable ceiling.
     :param background_density: Number of connections each node makes when it is added to the
-                               network. Sets both the edge count and, for 'scale_free', how large
-                               the hubs grow. Higher density lowers the reachable strength.
+                               network. Sets both the edge count and how large the hubs grow. Higher density lowers the reachable strength.
     :param background_seed: Seed for the background's own random generator. Kept separate from the
-                            global streams the rest of the simulation draws from, so switching the
-                            background on or off does not change which pairs get planted or with
-                            what magnitudes.
-    :param binary_p_high: Upper bound of the base rate drawn per binary node.
-    :param ordinal_concentration: Symmetric Dirichlet concentration for the category probabilities of
-                                  each ordinal node. Large values keep the categories near-balanced;
-                                  1.0 (the historical behaviour) is uniform over all splits and
-                                  routinely leaves categories nearly empty.
+                            global streams the rest of the simulation draws from, so changing the
+                            background does not change which pairs get planted or with what
+                            magnitudes.
     :return: A tuple containing the two simulated contexts, a meta file, a list of ground truth nodes
              and a dict of per-edge/per-node injected effect sizes.
              - context1: pd.DataFrame of the first simulated context.
@@ -266,11 +281,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     """
     if n_bi <= 0 and n_cont <= 0 and n_cat <= 0:
         raise ValueError('Either n_bi, n_cont, or n_cat needs to be larger than zero.')
-    if not 0.0 <= binary_p_low <= binary_p_high <= 1.0:
-        raise ValueError(f'binary_p_low and binary_p_high must satisfy 0 <= low <= high <= 1, '
-                         f'got low={binary_p_low}, high={binary_p_high}.')
-    if ordinal_concentration <= 0:
-        raise ValueError(f'ordinal_concentration must be larger than zero, got {ordinal_concentration}.')
+    if not 0.0 <= hub_reuse_prob <= 1.0:
+        raise ValueError(f'hub_reuse_prob must lie between 0 and 1, got {hub_reuse_prob}.')
     if not 0.0 <= corr_low <= corr_high <= 0.95:
         raise ValueError(f'corr_low and corr_high must satisfy 0 <= corr_low <= corr_high <= 0.95, '
                          f'got corr_low={corr_low}, corr_high={corr_high}.')
@@ -284,22 +296,23 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     n_min_samples = min(n_samples_1, n_samples_2)
     n_bi_effects = (n_shift_bi + n_corr_bi_bi + n_both_bi_bi + n_corr_bi_cont + n_both_bi_cont
                     + n_corr_bi_cat + n_both_bi_cat)
-    if n_bi_effects > 0 and binary_p_low * n_min_samples < _MIN_MINORITY_COUNT:
+    if n_bi_effects > 0 and _BINARY_P_LOW * n_min_samples < _MIN_MINORITY_COUNT:
         logging.warning(
-            f'binary_p_low={binary_p_low} with {n_min_samples} samples in the smaller context leaves '
-            f'only about {binary_p_low * n_min_samples:.0f} samples in a binary node\'s rarer level, '
-            f'below the ~{_MIN_MINORITY_COUNT} needed for a stable association estimate. Binary ground '
-            f'truth effects will be noise-limited at this sample size whatever the base rates are, so '
-            f'raising binary_p_low will not help. Increase n_samples_1/n_samples_2 instead.')
+            f'A binary base rate as low as {_BINARY_P_LOW} with {n_min_samples} samples in the smaller '
+            f'context leaves only about {_BINARY_P_LOW * n_min_samples:.0f} samples in a binary node\'s '
+            f'rarer level, below the ~{_MIN_MINORITY_COUNT} needed for a stable association estimate. '
+            f'Binary ground truth effects will be noise-limited at this sample size. Increase '
+            f'n_samples_1/n_samples_2.')
 
     n_cat_effects = (n_shift_cat + n_corr_cat_cat + n_both_cat_cat + n_corr_bi_cat + n_both_bi_cat
                      + n_corr_cont_cat + n_both_cont_cat)
-    if n_cat_effects > 0 and n_min_samples / 5 < _MIN_MINORITY_COUNT:
+    if n_cat_effects > 0 and n_min_samples / _N_ORDINAL_CATEGORIES < _MIN_MINORITY_COUNT:
         logging.warning(
-            f'{n_min_samples} samples in the smaller context spread over 5 ordinal categories leaves '
-            f'about {n_min_samples / 5:.0f} samples per category even when perfectly balanced, below '
-            f'the ~{_MIN_MINORITY_COUNT} needed for a stable association estimate. Ordinal ground truth '
-            f'effects will be noise-limited at this sample size regardless of ordinal_concentration.')
+            f'{n_min_samples} samples in the smaller context spread over {_N_ORDINAL_CATEGORIES} ordinal '
+            f'categories leaves about {n_min_samples / _N_ORDINAL_CATEGORIES:.0f} samples per category '
+            f'even when perfectly balanced, below the ~{_MIN_MINORITY_COUNT} needed for a stable '
+            f'association estimate. Ordinal ground truth effects will be noise-limited at this sample '
+            f'size.')
     if n_shift_cont + n_corr_cont_cont*2 + n_both_cont_cont*2 + n_corr_bi_cont + n_both_bi_cont + n_corr_cont_cat + n_both_cont_cat > n_cont:
         raise ValueError('The number of continuous abnormal nodes is larger than the total number of continuous nodes.')
     if n_shift_bi + n_corr_bi_bi*2 + n_both_bi_bi*2 + n_corr_bi_cont + n_both_bi_cont + n_corr_bi_cat + n_both_bi_cat > n_bi:
@@ -344,7 +357,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     # what keeps the negatives clean: an unplanted pair holds bit-identical values in corr1 and
     # corr2, so its true between-context difference is exactly zero rather than merely small.
     sigma_base, background_pairs, background_lambda_min = _build_background(
-        n_vars, background_topology, background_strength, background_density, background_seed)
+        n_vars, background_strength, background_density, background_seed)
     corr1 = sigma_base.copy()
     corr2 = sigma_base.copy()
 
@@ -353,24 +366,20 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     # hub_reuse_prob only ever produces disjoint stars that norm is exactly
     # sqrt(max over nodes of sum(magnitude**2)) -- the quantity `node_sumsq` already tracks. Keeping
     # every node's sum(magnitude**2) below lambda_min**2 is therefore a sufficient condition for
-    # both context matrices to stay positive definite. With the background off lambda_min is 1 and
-    # the rule reduces to sum(magnitude**2) < 1, the exact Schur-complement condition the hard-coded
-    # _HUB_SUMSQ_CEILING was approximating; the historical constant is kept verbatim in that case so
-    # behaviour without a background is unchanged.
+    # both context matrices to stay positive definite.
     #
     # Note this ceiling is consulted ONLY when deciding whether a node may take on another edge, so
     # it constrains how much a hub accumulates -- it does not bound the very first edge on a node.
     # A single edge larger than lambda_min can break validity on its own, which is what the check
     # just below warns about and the eigenvalue test before sampling catches for certain.
-    hub_sumsq_ceiling = (_HUB_SUMSQ_CEILING if background_topology is None
-                         else background_lambda_min ** 2)
+    hub_sumsq_ceiling = background_lambda_min ** 2
 
     # The largest magnitude any single edge can draw. If even one edge exceeds the budget, no hub
     # ceiling can help -- warn here, where the fix (lower `corr_high`, or weaken the background) is
     # obvious, rather than leaving only the eigenvalue failure several steps later. Warned rather
     # than raised because Weyl is a worst case: a perturbation rarely points along the narrowest
     # direction, so configurations moderately over this line usually still produce a valid matrix.
-    if background_topology is not None and corr_high >= background_lambda_min:
+    if corr_high >= background_lambda_min:
         logging.warning(
             f'corr_high={corr_high} can draw magnitudes up to {corr_high:.3f}, which exceeds the '
             f'budget left by the background (lambda_min={background_lambda_min:.4f}). The '
@@ -388,63 +397,35 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     hub_eligible = set()
     edge_magnitude = {}
 
-    def _inject(**pools):
-        node_pair, magnitude, c1, c2, *_ = _set_corr(
+    pools = {'cont': normal_nodes_cont, 'bi': normal_nodes_bi, 'ord': normal_nodes_cat}
+    pool_args = {'cont': 'normal_nodes_cont', 'bi': 'normal_nodes_bi', 'ord': 'normal_nodes_cat'}
+
+    # Every differential edge in planting order: all correlation-only pairs, then all
+    # correlation-plus-shift pairs, each in the pair-type order below.
+    pair_types = [('cont', 'cont'), ('bi', 'bi'), ('ord', 'ord'), ('cont', 'bi'), ('bi', 'ord'), ('cont', 'ord')]
+    n_corr = (n_corr_cont_cont, n_corr_bi_bi, n_corr_cat_cat, n_corr_bi_cont, n_corr_bi_cat, n_corr_cont_cat)
+    n_both = (n_both_cont_cont, n_both_bi_bi, n_both_cat_cat, n_both_bi_cont, n_both_bi_cat, n_both_cont_cat)
+    plan = ([(pair, corr_nodes) for pair, n in zip(pair_types, n_corr) for _ in range(n)]
+            + [(pair, shift_corr_nodes) for pair, n in zip(pair_types, n_both) for _ in range(n)])
+    reuse_plan = _plan_hub_reuse([pair for pair, _ in plan], hub_reuse_prob)
+
+    # A planned reuse can only fail when no node of the hub type is eligible yet (e.g. the very
+    # first pair of its type) or none has budget left; it is then carried to the next fresh pair
+    # of the same pair type, so the planned count is still met whenever possible.
+    deferred = {}
+    for (pair, ground_truth), reuse_type in zip(plan, reuse_plan):
+        if reuse_type is None and deferred.get(pair):
+            reuse_type = deferred[pair].pop()
+        node_pair, magnitude, reused = _set_corr(
             nodes=nodes, corr_low=corr_low, corr_high=corr_high, corr_matrix1=corr1, corr_matrix2=corr2,
             node_degree=node_degree, node_sumsq=node_sumsq, node_sum_magnitude=node_sum_magnitude,
             node_first_partner=node_first_partner, hub_eligible=hub_eligible,
-            hub_reuse_prob=hub_reuse_prob, hub_sumsq_ceiling=hub_sumsq_ceiling, **pools)
+            reuse_type=reuse_type, hub_sumsq_ceiling=hub_sumsq_ceiling,
+            **{pool_args[t]: pools[t] for t in pair})
+        if reuse_type is not None and not reused:
+            deferred.setdefault(pair, []).append(reuse_type)
         edge_magnitude[frozenset(node_pair)] = magnitude
-        return node_pair, c1, c2
-
-    # Introduce fixed correlations in context 1 (leave context 2 uncorrelated)
-    for _ in range(n_corr_cont_cont):
-        node_pair, corr1, corr2 = _inject(normal_nodes_cont=normal_nodes_cont)
-        corr_nodes.append(node_pair)
-
-    for _ in range(n_corr_bi_bi):
-        node_pair, corr1, corr2 = _inject(normal_nodes_bi=normal_nodes_bi)
-        corr_nodes.append(node_pair)
-
-    for _ in range(n_corr_cat_cat):
-        node_pair, corr1, corr2 = _inject(normal_nodes_cat=normal_nodes_cat)
-        corr_nodes.append(node_pair)
-
-    for _ in range(n_corr_bi_cont):
-        node_pair, corr1, corr2 = _inject(normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
-        corr_nodes.append(node_pair)
-
-    for _ in range(n_corr_bi_cat):
-        node_pair, corr1, corr2 = _inject(normal_nodes_bi=normal_nodes_bi, normal_nodes_cat=normal_nodes_cat)
-        corr_nodes.append(node_pair)
-
-    for _ in range(n_corr_cont_cat):
-        node_pair, corr1, corr2 = _inject(normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
-        corr_nodes.append(node_pair)
-
-    for _ in range(n_both_cont_cont):
-        node_pair, corr1, corr2 = _inject(normal_nodes_cont=normal_nodes_cont)
-        shift_corr_nodes.append(node_pair)
-
-    for _ in range(n_both_bi_bi):
-        node_pair, corr1, corr2 = _inject(normal_nodes_bi=normal_nodes_bi)
-        shift_corr_nodes.append(node_pair)
-
-    for _ in range(n_both_cat_cat):
-        node_pair, corr1, corr2 = _inject(normal_nodes_cat=normal_nodes_cat)
-        shift_corr_nodes.append(node_pair)
-
-    for _ in range(n_both_bi_cont):
-        node_pair, corr1, corr2 = _inject(normal_nodes_bi=normal_nodes_bi, normal_nodes_cont=normal_nodes_cont)
-        shift_corr_nodes.append(node_pair)
-
-    for _ in range(n_both_bi_cat):
-        node_pair, corr1, corr2 = _inject(normal_nodes_bi=normal_nodes_bi, normal_nodes_cat=normal_nodes_cat)
-        shift_corr_nodes.append(node_pair)
-
-    for _ in range(n_both_cont_cat):
-        node_pair, corr1, corr2 = _inject(normal_nodes_cont=normal_nodes_cont, normal_nodes_cat=normal_nodes_cat)
-        shift_corr_nodes.append(node_pair)
+        ground_truth.append(node_pair)
 
     # Select nodes for mean shifts. Selection is deterministic (first available node in order),
     # so repeated simulations with the same settings always tweak exactly the same variables.
@@ -511,24 +492,15 @@ def simulate_copula(path=None, name1='context1', name2='context2',
             marginals[node] = {'kind': 'continuous', 'loc': mean, 'scale': std}
 
         elif n_cont <= i < n_cont + n_bi:
-            # Binary node. The base rate is drawn from [binary_p_low, binary_p_high] rather than
-            # from the full unit interval: the maximum attainable phi between two binary variables
-            # is bounded by their marginals, so a node that is positive in only a few percent of
-            # samples attenuates the correlation difference its edges actually carry, even though
-            # the ground truth records the drawn `corr_low`/`corr_high` magnitude for every edge.
-            p = np.random.uniform(binary_p_low, binary_p_high)
+            # Binary node. The base rate is bounded away from 0 and 1 (see _BINARY_P_LOW).
+            p = np.random.uniform(_BINARY_P_LOW, _BINARY_P_HIGH)
             context1_bi[node] = sc.stats.bernoulli.ppf(u1[i, :], p=p).astype(int)
             context2_bi[node] = sc.stats.bernoulli.ppf(u2[i, :], p=p).astype(int)
             marginals[node] = {'kind': 'binary', 'p': float(p)}
 
         else:
-            # Categorical node
-            #n_categories = np.random.randint(3, 10) # Randomly choose number of categories between 3 and 10
-            n_categories = 5 # fixed number of categories
-            # Symmetric Dirichlet: ordinal_concentration=1 is uniform over every possible split and
-            # routinely leaves categories nearly empty, which attenuates the realised association the
-            # same way an extreme binary base rate does. Larger values keep the categories balanced.
-            p = np.random.dirichlet(np.full(n_categories, ordinal_concentration), size=1).flatten()
+            # Categorical node. Near-balanced categories (see _ORDINAL_CONCENTRATION).
+            p = np.random.dirichlet(np.full(_N_ORDINAL_CATEGORIES, _ORDINAL_CONCENTRATION), size=1).flatten()
             cdf = np.cumsum(p)
             context1_cat[node] = np.searchsorted(cdf, u1[i, :])
             context2_cat[node] = np.searchsorted(cdf, u2[i, :])
@@ -574,7 +546,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
 # Helper function to set correlation in copula-based simulation
 def _set_corr(nodes, corr_low, corr_high, corr_matrix1, corr_matrix2, normal_nodes_bi=None, normal_nodes_cont=None, normal_nodes_cat=None,
               node_degree=None, node_sumsq=None, node_sum_magnitude=None, node_first_partner=None, hub_eligible=None,
-              hub_reuse_prob=0.0, hub_sumsq_ceiling=_HUB_SUMSQ_CEILING):
+              reuse_type=None, *, hub_sumsq_ceiling):
     node_degree = {} if node_degree is None else node_degree
     node_sumsq = {} if node_sumsq is None else node_sumsq
     node_sum_magnitude = {} if node_sum_magnitude is None else node_sum_magnitude
@@ -583,7 +555,7 @@ def _set_corr(nodes, corr_low, corr_high, corr_matrix1, corr_matrix2, normal_nod
 
     # Node selection is deterministic (first available node in order) for the fresh case, so
     # repeated simulations with the same settings still introduce the correlation on exactly the
-    # same variable pairs when hub_reuse_prob=0. Each branch below just picks which pool(s) feed
+    # same variable pairs when no reuse is planned. Each branch below just picks which pool(s) feed
     # the pair's two slots; the actual draw (fresh vs. hub reuse) happens after, uniformly.
     if normal_nodes_bi is not None and normal_nodes_cont is not None and normal_nodes_cat is None:
         pool1, prefix1 = normal_nodes_cont, 'cont'
@@ -606,31 +578,32 @@ def _set_corr(nodes, corr_low, corr_high, corr_matrix1, corr_matrix2, normal_nod
     else:
         raise ValueError('At least one of normal_nodes_bi, normal_nodes_cont, or normal_nodes_cat must be provided.')
 
-    # Decide, before drawing anything, whether this edge attempts a hub reuse and if so which of
-    # the pair's two slots attempts it -- never both. That restriction is what keeps a hub's own
-    # sum(magnitude**2) check below exact rather than approximate: it guarantees a hub's edges only
-    # ever land on leaves that never grow a second edge of their own, so every hub is isolated from
-    # every other hub (see the module docstring / Simulation_TODO.md Tier 3.1 discussion -- a plain
-    # chain of ordinary-looking edges can be invalid even when no single node looks overloaded).
+    # Whether this edge reuses a hub, and of which type, is decided by the caller (see
+    # `_plan_hub_reuse`). A reuse only ever fills one of the pair's two slots -- never both. That
+    # restriction is what keeps a hub's own sum(magnitude**2) check below exact rather than
+    # approximate: it guarantees a hub's edges only ever land on leaves that never grow a second
+    # edge of their own, so every hub is isolated from every other hub (see the module docstring /
+    # Simulation_TODO.md Tier 3.1 discussion -- a plain chain of ordinary-looking edges can be
+    # invalid even when no single node looks overloaded).
     magnitude = np.random.uniform(corr_low, corr_high)
     reused_node = None
-    if hub_reuse_prob > 0 and random.random() < hub_reuse_prob:
-        reuse_slot = random.choice([1, 2])
-        prefix = prefix1 if reuse_slot == 1 else prefix2
+    if reuse_type is not None:
+        if reuse_type not in (prefix1, prefix2):
+            raise ValueError(f'reuse_type {reuse_type!r} matches neither endpoint type '
+                             f'({prefix1!r}, {prefix2!r}).')
+        reuse_slot = 1 if reuse_type == prefix1 else 2
         # `sorted` is load-bearing, not cosmetic: hub_eligible is a set, and iterating a set of
         # strings follows hash order, which Python randomises per process (PEP 456). Without a
         # fixed order, random.choice below picks a different hub in every process even from an
         # identical RNG state -- seeding `random` and `np.random` is not enough -- so the planted
         # network, and therefore the simulated data, silently differs between otherwise-identical
-        # runs whenever hub_reuse_prob > 0. Guarded by tests/test_hub_reuse_reproducibility.py.
-        candidates = sorted(n for n in hub_eligible if n.startswith(prefix))
+        # runs. Guarded by tests/test_hub_reuse_reproducibility.py.
+        # Only hubs that can take this edge without passing the validity ceiling are candidates.
+        candidates = sorted(n for n in hub_eligible
+                            if n.startswith(reuse_type) and node_sumsq[n] + magnitude ** 2 < hub_sumsq_ceiling)
         if candidates:
-            candidate = random.choice(candidates)
-            if node_sumsq.get(candidate, 0.0) + magnitude ** 2 < hub_sumsq_ceiling:
-                reused_node = candidate
-            # else: committing this edge would push the hub past the validity ceiling -- abandon
-            # the reuse (no shrinking, no search for a different hub) and draw a fresh pair below.
-        # else: no eligible node of this type has been placed yet -- draw a fresh pair below.
+            reused_node = random.choice(candidates)
+        # else: no eligible hub of this type -- draw a fresh pair below; the caller defers the reuse.
 
     if reused_node is not None and reuse_slot == 1:
         node1, node2 = reused_node, pool2.pop(0)
@@ -683,7 +656,7 @@ def _set_corr(nodes, corr_low, corr_high, corr_matrix1, corr_matrix2, normal_nod
     updated = np.clip(target[idx1, idx2] + magnitude * sign, -_MAX_ABS_CORR, _MAX_ABS_CORR)
     target[idx1, idx2] = target[idx2, idx1] = updated
 
-    return (node1, node2), magnitude, corr_matrix1, corr_matrix2, normal_nodes_bi, normal_nodes_cont, normal_nodes_cat
+    return (node1, node2), magnitude, reused_node is not None
 
 
 # Adapted from pycop package

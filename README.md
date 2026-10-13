@@ -69,6 +69,6 @@ pip install -e .
 Based on an extensive benchmark analysis performed on simulated data, we recommend the following pipeline configuration:
 
 - Filtering: For reasonably small datasets, no filtering is required. For high-dimensional data, filtering can substantially reduce the runtime of moDiNA.
-- Edge Metric: *pre-LS*
-- Node Metric: *STC*
+- Edge Metric: *diff-LPxRE*
+- Node Metric: *STC-P*
 - Ranking Algorithm: *PageRank+*

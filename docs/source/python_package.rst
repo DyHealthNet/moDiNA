@@ -198,15 +198,15 @@ Parameters:
 
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
 - ``meta_file``: pandas DataFrame specifying the variable metadata. Must contain the columns ``label`` and ``type`` describing each variable and its data type.
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'diff-E'``, ``'diff-T-E'``, ``'diff-L-P'``, ``'diff-L-PE'``, ``'sum-diff-PE'``, ``'sum-diff-L-PE'``, ``'int-IS-E'``.
-- ``node_metric``: Node-level metric used to compute the differential network. Options include ``'STC'``, ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-L-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'PRC-L-P'``, ``'PRC-E'``.
-- ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'``, ``'direct_node'`` and ``'direct_edge'``. Defaults to ``'PageRank+'``.
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'`` and ``'sum-LP-RE'``, plus the capped variants ``'diff-LPxRE-cap'`` and ``'diff-LPxVE-cap'`` when ``lp_cap`` is set (see :ref:`diffnet`).
+- ``node_metric``: Node-level metric used to compute the differential network. Options are ``'<family>-<score>'`` with family ``WDC``, ``PRC`` or ``STC`` and score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE`` or ``LPxVE`` (e.g. ``'STC-P'``, ``'PRC-LPxRE'``), plus the capped variants ``'<family>-LPxRE-cap'`` and ``'<family>-LPxVE-cap'`` when ``lp_cap`` is set (see :ref:`diffnet`).
+- ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'MeanEdgeRank'``, ``'MedianEdgeRank'``, ``'nodeRank'``, ``'MeanProductRank'`` and ``'MedianProductRank'``. Defaults to ``'PageRank+'``.
 - ``filter_method``: Filtering method. Options include ``'degree'``, ``'density'``. Required when ``filter_target`` is not ``None``.
 - ``filter_param``: Parameter controlling the filtering strength.
 - ``filter_target``: Which network to filter. ``None`` (default) performs no filtering. ``'context-specific'`` filters the two context networks *before* constructing the differential network (using ``filter_metric`` and ``filter_rule``); ``'differential'`` filters the differential network *after* its construction, directly on the computed ``edge_metric`` (in this case ``filter_metric`` and ``filter_rule`` are ignored). When ``filter_target`` is not ``None``, ``filter_method`` must be provided.
 - ``filter_metric``: Edge metric used for filtering. Options include ``'raw-P'`` and ``'rescaled-E'``. Only used when ``filter_target='context-specific'``.
 - ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'``. Only used when ``filter_target='context-specific'``.
-- ``max_path_length``: Maximum path length considered when computing integrated interaction scores. Defaults to ``2``.
+- ``lp_cap``: Cap for :math:`-\log_{10}(p)` in the capped product metrics (``'-LPxRE-cap'``, ``'-LPxVE-cap'``), which are only available when it is set. Above the cap only the effect size carries the signal. All other metrics are unaffected. Defaults to ``None``.
 - ``test_type``: Statistical test used for association score calculation. Options include ``'parametric'`` and ``'nonparametric'``. Defaults to ``'nonparametric'``.
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
 - ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.
@@ -220,8 +220,8 @@ Parameters:
 
     Based on an extensive benchmark analysis performed on simulated data, we recommend the following pipeline configuration:
 
-    - Edge Metric: ``diff-L-PE``
-    - Node Metric: ``STC``
+    - Edge Metric: ``diff-LPxRE``
+    - Node Metric: ``STC-P``
     - Ranking Algorithm: ``PageRank+``
 
 
@@ -245,8 +245,8 @@ Example:
         context1=context1,
         context2=context2,
         meta_file=meta,
-        edge_metric='diff-L-PE',
-        node_metric='STC',
+        edge_metric='diff-LPxRE',
+        node_metric='STC-P',
         ranking_alg='PageRank+',
         filter_target='context-specific',
         filter_method='density',
@@ -378,7 +378,7 @@ multiple testing-adjusted p-value (``'raw-P'``) or the absolute Z-score-normaliz
 When filtering the two context networks jointly with ``filter``, there are two alternative rules for integrating them.
 The ``union`` rule retains all edges that are present in either network, preserving their original association scores.
 This approach can recover edges that were eliminated in one network. However, the resulting context-specific networks remain structurally identical.
-For edge metrics such as DC-P or DC-E, which rely solely on network topology, it is therefore recommended to use the ``zero`` rule instead.
+If the node metrics should also reflect edges that are only present in one context, use the ``zero`` rule instead.
 Under the ``zero`` rule, removed edges are treated as missing and will be assigned insignificant p-values of 1.0 and effect sizes of 0.0 in downstream calculations.
 
 The ``filter_single`` function filters a single network with the same ``filter_method``/``filter_param``/``filter_metric``
@@ -449,7 +449,7 @@ Filtering the differential network (``filter_differential``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Instead of filtering the context-specific networks, the **differential** network itself can be filtered after it has
 been constructed. Because the differential network is a single graph whose edges already carry the chosen ``edge_metric``
-(e.g. ``diff-E``, ``diff-P``), there is nothing to integrate across contexts and no p-value-vs-effect-size choice to make:
+(e.g. ``diff-RE``, ``diff-LP``), there is nothing to integrate across contexts and no p-value-vs-effect-size choice to make:
 filtering always keeps the strongest edges according to the computed ``edge_metric``. Consequently, ``filter_metric`` and
 ``filter_rule`` do not apply here.
 
@@ -476,15 +476,14 @@ Example:
 
     edges_filtered, edge_node_stats = filter_differential(
         edges_diff=edges_diff,
-        edge_metric='diff-E',
+        edge_metric='diff-RE',
         filter_method='degree',
         filter_param=5
     )
 
 
 .. note::
-    Edge filtering can substantially reduce the runtime of **moDiNA** for large datasets. It is especially recommended
-    when using the computationally heavy ``int-IS`` edge metric to construct the differential network.
+    Edge filtering can substantially reduce the runtime of **moDiNA** for large datasets.
 
 
 .. _diffnet:
@@ -501,32 +500,59 @@ Differential Network Construction
 
 Two context-specific networks are aggregated into a differential network using a 
 variety of node- and edge-level metrics provided in the ``compute_diff_network`` function. 
-Since effect sizes obtained from data type-specific
-statistical tests are located on different scales, rescaling is required to make them
-comparable across data types. This can be achieved either through Z-score normalization,
-which is used in ``pre`` metrics, or through min–max normalization, which is used in ``post`` metrics.
+All metrics are built from the same per-context scores, so every score can be compared across the
+edge and node metric families. For each edge (association test) in a context, with :math:`p` the
+multiple testing-adjusted p-value and :math:`E` the effect size:
 
-Both of these rescale each test type's effect size *by rank* within the observed data, so
-comparability is only relative to the current sample. As an absolute-scale alternative,
-``diff-T-E`` converts each test type's effect size onto a common r² (variance-explained) scale
-using known statistical conversions (e.g. squaring a correlation coefficient, or using partial
-η²/η² directly, since they are already r²-equivalent), so a given ``transformed-E`` value has
-the same interpretation regardless of which test produced it, independent of rank within the
-sample.
+- ``P`` :math:`= 1 - p`: linear significance.
+- ``LP`` :math:`= -\log_{10}(p)`: log significance, which resolves p-values across orders of magnitude.
+- ``RE``: rank-based rescaled effect size. Per test type, the absolute effect sizes of both contexts
+  are pooled, ranked and mapped onto a probit scale between 0 and 1.96; the sign is restored. Since effect
+  sizes from data type-specific tests are located on different scales, this makes them comparable
+  relative to the observed data.
+- ``VE``: variance-explained effect size. Correlation-like effect sizes (Pearson, Spearman,
+  rank-biserial, point-biserial, Cramér's V) are squared with their sign retained; partial
+  :math:`\eta^2` and :math:`\eta^2` are already variance-explained and used as is. A given value has the
+  same interpretation for every test and dataset.
+- ``LPxRE`` :math:`= LP \cdot RE` and ``LPxVE`` :math:`= LP \cdot VE`: combine the evidence for an
+  association with its strength and direction, so that only significant *and* substantial
+  associations obtain a high score.
+- ``LPxRE-cap`` and ``LPxVE-cap`` (only when ``lp_cap`` is set): as ``LPxRE`` and ``LPxVE``, but with
+  :math:`\min(LP, \text{lp\_cap})`. Above the cap, the significance is considered saturated (mostly driven
+  by sample size) and only the effect size carries the signal.
+
+Edge metrics:
+
+- ``diff-<score>``: absolute difference of a score between the two contexts, for every score above.
+- ``sum-LP-VE`` and ``sum-LP-RE``: sum of ``diff-LP`` and ``diff-VE`` / ``diff-RE``, an additive
+  alternative to the products.
+
+Node metrics (``<family>-<score>``, for every score above):
+
+- ``WDC-<score>``: weighted degree centrality, i.e., the sum of the absolute score over a node's edges in each
+  context, normalized by the maximum per context; the metric is the absolute difference between the contexts.
+- ``PRC-<score>``: PageRank centrality with the absolute score as edge weight, normalized by the maximum per
+  context; the metric is the absolute difference between the contexts.
+- ``STC-<score>``: statistical test centrality. Each node is tested directly for a difference between the
+  contexts (chi-squared test for nominal and binary nodes, Mann-Whitney U test for ordinal nodes, and t-test
+  or Mann-Whitney U test for continuous nodes depending on ``test_type``), with multiple testing correction
+  across nodes. The scores are derived from the test's adjusted p-value and absolute effect size (Cramér's V,
+  rank-biserial or point-biserial correlation), with ``RE`` rank-based within each test and ``VE`` the squared
+  effect size.
 
 Parameters:
 
 - ``scores1``, ``scores2``: pandas DataFrames containing the statistical association scores of the two context-specific networks.
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options include ``'diff-P'``, ``'diff-E'``, ``'diff-T-E'``, ``'diff-L-P'``, ``'diff-L-PE'``, ``'sum-diff-PE'``, ``'sum-diff-L-PE'``, ``'int-IS-E'``.
-- ``node_metric``: Node-level metric used to compute the differential network. Options include ``'STC'``, ``'DC-P'``, ``'DC-E'``, ``'WDC-P'``, ``'WDC-L-P'``, ``'WDC-E'``, ``'PRC-P'``, ``'PRC-L-P'``, ``'PRC-E'``.
-- ``max_path_length``: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to ``2``.
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'`` and ``'sum-LP-RE'``, plus the capped variants ``'diff-LPxRE-cap'`` and ``'diff-LPxVE-cap'`` when ``lp_cap`` is set (see :ref:`diffnet`).
+- ``node_metric``: Node-level metric used to compute the differential network. Options are ``'<family>-<score>'`` with family ``WDC``, ``PRC`` or ``STC`` and score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE`` or ``LPxVE`` (e.g. ``'STC-P'``, ``'PRC-LPxRE'``), plus the capped variants ``'<family>-LPxRE-cap'`` and ``'<family>-LPxVE-cap'`` when ``lp_cap`` is set (see :ref:`diffnet`).
+- ``lp_cap``: Cap for :math:`-\log_{10}(p)` in the capped product metrics (``'-LPxRE-cap'``, ``'-LPxVE-cap'``), which are only available when it is set. Above the cap only the effect size carries the signal. All other metrics are unaffected. Defaults to ``None``.
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
 - ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.
 - ``path``: Optional directory where the computed differential scores will be saved.
 - ``format``: Output format used when saving the differential network. Options include ``'csv'`` and ``'graphml'``. Defaults to ``'csv'``.
-- ``meta_file``: pandas DataFrame containing metadata about the variables. Must include the columns ``label`` and ``type``. Required when using the ``STC`` node metric.
-- ``test_type``: Statistical test used for continuous nodes in the ``STC`` metric. Options include ``'parametric'`` and ``'nonparametric'``. Defaults to ``'nonparametric'``.
+- ``meta_file``: pandas DataFrame containing metadata about the variables. Must include the columns ``label`` and ``type``. Required when using the ``STC`` node metrics.
+- ``test_type``: Statistical test used for continuous nodes in the ``STC`` metrics. Options include ``'parametric'`` and ``'nonparametric'``. Defaults to ``'nonparametric'``.
 
 
 Returns:
@@ -548,8 +574,8 @@ Example:
         scores2=scores_context2,
         context1=data_context1,
         context2=data_context2,
-        edge_metric='diff-L-PE',
-        node_metric='STC',
+        edge_metric='diff-LPxRE',
+        node_metric='STC-P',
         test_type='nonparametric',
         meta_file=meta
     )
@@ -562,33 +588,48 @@ Ranking
 The final step in differential network analysis with **moDiNA** is to rank nodes or edges 
 according to their differential activity using the ``compute_ranking`` function. 
 Several ranking algorithms are available, which differ in the type of evidence they incorporate. 
-In particular, algorithms may use differential edge and/or node scores,  
-and may account for the directionality of differential effects. 
+In particular, algorithms may use differential edge and/or node scores. 
 The table below summarizes the implemented ranking methods and their required inputs.
 
-+------------------+-------------------------------+------------------+
-| Ranking Algorithm|             Input             | Output           |
-+                  +---------+---------+-----------+                  +
-|                  | Edges   | Nodes   | Direction |                  |
-+==================+=========+=========+===========+==================+
-| ``DimontRank``   | ✓       |         | ✓         | node ranking     |
-+------------------+---------+---------+-----------+------------------+
-| ``absDimontRank``| ✓       |         |           | node ranking     |
-+------------------+---------+---------+-----------+------------------+
-| ``PageRank``     | ✓       |         |           | node ranking     |
-+------------------+---------+---------+-----------+------------------+
-| ``PageRank+``    | ✓       | ✓       |           | node ranking     |
-+------------------+---------+---------+-----------+------------------+
-| ``direct_node``  |         | ✓       |           | node ranking     |
-+------------------+---------+---------+-----------+------------------+
-| ``direct_edge``  | ✓       |         |           | edge ranking     |
-+------------------+---------+---------+-----------+------------------+
++-----------------------+-------------------+------------------+
+| Ranking Algorithm     |       Input       | Output           |
++                       +---------+---------+                  +
+|                       | Edges   | Nodes   |                  |
++=======================+=========+=========+==================+
+| ``MeanEdgeRank``      | ✓       |         | node ranking     |
++-----------------------+---------+---------+------------------+
+| ``MedianEdgeRank``    | ✓       |         | node ranking     |
++-----------------------+---------+---------+------------------+
+| ``PageRank``          | ✓       |         | node ranking     |
++-----------------------+---------+---------+------------------+
+| ``PageRank+``         | ✓       | ✓       | node ranking     |
++-----------------------+---------+---------+------------------+
+| ``nodeRank``          |         | ✓       | node ranking     |
++-----------------------+---------+---------+------------------+
+| ``MeanProductRank``   | ✓       | ✓       | node ranking     |
++-----------------------+---------+---------+------------------+
+| ``MedianProductRank`` | ✓       | ✓       | node ranking     |
++-----------------------+---------+---------+------------------+
+
+``MeanEdgeRank`` and ``MedianEdgeRank`` score each node by the mean (``edge-mean``) or median
+(``edge-median``) of the edge metric over its incident edges.
+
+``MeanProductRank`` and ``MedianProductRank`` rank the nodes by their node metric and by the mean
+(``edge-mean``) or median (``edge-median``) of their incident edge metric, and score each node by the
+product of both ranks. Their score is therefore better when lower; the ``rank`` column is 1 for the top
+node for every algorithm. The two component ranks are returned as ``rank_node`` and ``rank_edge``.
+
+Algorithms that combine node and edge metrics (``PageRank+``, ``MeanProductRank`` and
+``MedianProductRank``) require both
+metrics to use the same effect-size rescaling: metrics based on ``RE`` (``*-RE``, ``*-LPxRE``,
+``*-LPxRE-cap``, ``sum-LP-RE``) cannot be combined with metrics based on ``VE`` (``*-VE``,
+``*-LPxVE``, ``*-LPxVE-cap``, ``sum-LP-VE``). P- and LP-based metrics can be combined with either.
 
 Parameters:
 
 - ``nodes_diff``: pandas DataFrame containing differential node scores.
 - ``edges_diff``: pandas DataFrame containing differential edge scores.
-- ``ranking_alg``: Ranking algorithm to compute. Options include ``'PageRank+'``, ``'PageRank'``, ``'absDimontRank'``, ``'DimontRank'`` and ``'nodeRank'``.
+- ``ranking_alg``: Ranking algorithm to compute. Options include ``'PageRank+'``, ``'PageRank'``, ``'MeanEdgeRank'``, ``'MedianEdgeRank'``, ``'nodeRank'``, ``'MeanProductRank'`` and ``'MedianProductRank'``.
 - ``meta_file``: Optional pandas DataFrame specifying node metadata (columns ``label`` and ``type``), used to generate type-specific rankings.
 - ``path``: Optional file path to save the resulting ranking as a CSV file.
 - ``edge_node_stats``: Optional precomputed per-node edge statistics (as returned by ``compute_diff_edges`` / ``compute_diff_network``). If omitted but an edge metric was employed, the statistics are computed on the fly.

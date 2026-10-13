@@ -13,7 +13,6 @@ dependencies = [
     "pandas >=2.2.3",
     "scipy >=1.11.0",
     "networkx >=3.5",
-    "igraph >=1.0.0",
     "napypi >=2.1"
 ]
 

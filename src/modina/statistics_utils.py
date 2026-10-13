@@ -33,30 +33,56 @@ def cohens_d_to_r(scores1, scores2, n1: int, n2: int):
 # supplied p-values at once (as opposed to napy's per-test-call correction). NaN entries are
 # untested pairs/nodes and are excluded from the correction family (kept as NaN in the output),
 # so they do not inflate the FDR denominator.
-def fdr_correction(pvalues, method='bh'):
+# With `groups` (one label per p-value) the correction is applied separately within each group
+# (a "local" scope); without it all p-values form a single "global" family.
+def fdr_correction(pvalues, method='bh', groups=None):
     if method not in ('bh', 'by'):
         raise ValueError(f"Invalid correction method '{method}'. Choose from: 'bh' or 'by'.")
     p = np.asarray(pvalues, dtype=float)
-    valid = ~np.isnan(p)
     out = p.copy()
-    if valid.any():
-        out[valid] = np.clip(stats.false_discovery_control(p[valid], method=method), 0.0, 1.0)
+    if groups is None:
+        group_arr = np.zeros(len(p), dtype=int)
+    else:
+        group_arr = np.asarray(groups)
+        if len(group_arr) != len(p):
+            raise ValueError("'groups' must have the same length as 'pvalues'.")
+    for g in np.unique(group_arr):
+        idx = (group_arr == g) & ~np.isnan(p)
+        if idx.any():
+            out[idx] = np.clip(stats.false_discovery_control(p[idx], method=method), 0.0, 1.0)
     return out
+
+
+# Validate the multiple-testing scope: 'global' pools all edges (nodes) into one FDR family,
+# 'local' corrects separately within each statistical test type (e.g. pearson, spearman, ttest,
+# mwu, chi2, anova, kruskal; for STC nodes: the test used to compare the node across contexts).
+CORRECTION_SCOPES = ('global', 'local')
+
+
+def check_correction_scope(correction_scope):
+    if correction_scope not in CORRECTION_SCOPES:
+        raise ValueError(f"Invalid correction_scope '{correction_scope}'. Choose from: 'global' or 'local'.")
+    return correction_scope
 
 
 # Materialize p-value transforms used by the differential metrics.
 # Computes (idempotently) two columns derived from the adjusted p-value 'raw-P':
 #   log-P = -log10(p)   (significance strength; higher = more significant)
 #   inv-P = 1 - p       (linear significance strength in [0, 1])
-# Zero p-values are floored with an epsilon (min non-zero p / 10) so -log10 is finite;
-# if every p-value is zero, a fixed fallback epsilon is used (avoids min() on an empty array).
 def add_pval_transforms(scores):
-    p = scores['raw-P'].to_numpy(dtype=float)
-    nonzero = p[p > 0]
-    epsilon = nonzero.min() / 10.0 if nonzero.size else 1e-10
-    scores['log-P'] = -np.log10(np.where(p == 0, epsilon, p))
+    scores['log-P'] = _neglog10_p(scores['raw-P'].to_numpy(dtype=float))
     scores['inv-P'] = 1.0 - scores['raw-P']
     return scores
+
+
+# -log10(p), the single place the LP score is computed.
+# Zero p-values are floored with an epsilon (min non-zero p / 10) so -log10 is finite;
+# if every p-value is zero, a fixed fallback epsilon is used (avoids min() on an empty array).
+def _neglog10_p(p):
+    p = np.asarray(p, dtype=float)
+    nonzero = p[p > 0]
+    epsilon = nonzero.min() / 10.0 if nonzero.size else 1e-10
+    return -np.log10(np.where(p == 0, epsilon, p))
 
 
 # Test types whose raw effect size (see TEST_EFFECT_SIZES in context_net_inference.py) is
@@ -84,11 +110,15 @@ def effect_size_to_r2(scores1, scores2, metric='transformed-E'):
     scores2 = scores2.copy()
 
     for scores in (scores1, scores2):
-        raw = scores['raw-E'].to_numpy(dtype=float)
-        r2_scale = scores['test_type'].isin(_R2_SCALE_TEST_TYPES).to_numpy()
-        scores[metric] = np.where(r2_scale, raw, np.sign(raw) * raw ** 2)
+        scores[metric] = _r2_transform(scores['raw-E'], scores['test_type'])
 
     return scores1, scores2
+
+
+def _r2_transform(raw_e, test_type):
+    raw = np.asarray(raw_e, dtype=float)
+    r2_scale = np.isin(np.asarray(test_type), list(_R2_SCALE_TEST_TYPES))
+    return np.where(r2_scale, raw, np.sign(raw) * raw ** 2)
 
 
 # Probit rescaling (rank-based normalization)
@@ -125,27 +155,66 @@ def probit_rescaling(scores1, scores2, metric='rescaled-E'):
         v1 = scores1.loc[idx1, metric_raw].to_numpy()
         v2 = scores2.loc[idx2, metric_raw].to_numpy()
         combined = np.concatenate([v1, v2])
-        n = len(combined)
 
         # Folded probit: rank |raw-E| so association strength (not sign) determines rank.
-        # Percentile mapped to (0.5, 1) so norm.ppf gives values in (0, +inf).
         # Sign is restored afterward, so strong negative associations rank equally to
         # strong positive ones. For non-negative test types sign=+1 always (no-op).
-        if n == 1:
-            scores1.loc[idx1, metric] = 0.0
-            scores2.loc[idx2, metric] = 0.0
-            continue
-        signs = np.sign(combined)
-        ranks = stats.rankdata(np.abs(combined))
-        # Map rank 1 → percentile 0.5 → probit 0.0; rank n → percentile 0.975 → probit 1.96.
-        # Factor 0.475 gives max = norm.ppf(0.975) = 1.96 (z-score for p=0.05 two-sided).
-        # Formula (rank-1)/(n-1) eliminates n-dependency at both endpoints.
-        percentiles = 0.5 + (ranks - 1) / (n - 1) * 0.475
-        probit_magnitude = stats.norm.ppf(percentiles)
-        probit_vals = signs * probit_magnitude
+        probit_vals = np.sign(combined) * _probit_magnitude(np.abs(combined))
 
         scores1.loc[idx1, metric] = probit_vals[:len(v1)]
         scores2.loc[idx2, metric] = probit_vals[len(v1):]
+
+    return scores1, scores2
+
+
+# Map non-negative values onto a probit scale by their rank, pooled over all values given.
+# Percentiles are mapped to (0.5, 0.975) so norm.ppf gives values in [0, 1.96]:
+# rank 1 -> percentile 0.5 -> probit 0.0; rank n -> percentile 0.975 -> probit 1.96
+# (z-score for p=0.05 two-sided). (rank-1)/(n-1) eliminates n-dependency at both endpoints.
+# A single value has no rank information and is mapped to 0.
+def _probit_magnitude(abs_values):
+    abs_values = np.asarray(abs_values, dtype=float)
+    n = len(abs_values)
+    if n == 1:
+        return np.zeros(1)
+    ranks = stats.rankdata(abs_values)
+    percentiles = 0.5 + (ranks - 1) / (n - 1) * 0.475
+    return stats.norm.ppf(percentiles)
+
+
+# Add the per-context score columns that every differential metric is built from (see
+# metrics.SCORE_TYPES): P = 1 - p, LP = -log10(p), RE = rank-based probit rescaled effect size,
+# VE = variance-explained effect size, and the products LPxRE and LPxVE. If lp_cap is set, the
+# capped products LPxRE-cap and LPxVE-cap use min(LP, lp_cap) instead of LP.
+# P, LP and VE are always recomputed from 'raw-P'/'raw-E' rather than reusing cached 'log-P',
+# 'inv-P' or 'transformed-E' columns. RE reuses 'rescaled-E' when both contexts already carry it,
+# as it is a joint cross-context transform that the pipeline computes before filtering.
+def add_score_columns(scores1, scores2, lp_cap=None):
+    from modina.metrics import check_lp_cap
+    lp_cap = check_lp_cap(lp_cap)
+
+    if 'rescaled-E' in scores1.columns and 'rescaled-E' in scores2.columns:
+        scores1 = scores1.copy()
+        scores2 = scores2.copy()
+    else:
+        scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
+
+    for scores in (scores1, scores2):
+        p = scores['raw-P'].to_numpy(dtype=float)
+        lp = _neglog10_p(p)
+        re = scores['rescaled-E'].to_numpy(dtype=float)
+        ve = _r2_transform(scores['raw-E'], scores['test_type'])
+        scores['P'] = 1.0 - p
+        scores['LP'] = lp
+        scores['RE'] = re
+        scores['VE'] = ve
+        # + 0.0 turns -0.0 into 0.0
+        scores['LPxRE'] = lp * re + 0.0
+        scores['LPxVE'] = lp * ve + 0.0
+        if lp_cap is not None:
+            lp_capped = np.minimum(lp, lp_cap)
+            scores['LPxRE-cap'] = lp_capped * re + 0.0
+            scores['LPxVE-cap'] = lp_capped * ve + 0.0
 
     return scores1, scores2
 

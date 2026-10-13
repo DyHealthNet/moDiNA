@@ -1,12 +1,14 @@
-from modina.statistics_utils import probit_rescaling, effect_size_to_r2, _df_to_numpy, _separate_types, add_pval_transforms, fdr_correction, reconcile_flagged_variables
-from modina.context_net_inference import _order_categories
+from modina.statistics_utils import (_df_to_numpy, _separate_types, _neglog10_p, _probit_magnitude, add_score_columns,
+                                     fdr_correction, reconcile_flagged_variables, check_correction_scope)
+from modina.context_net_inference import _order_categories, TEST_EFFECT_SIZES
+from modina.metrics import (EDGE_METRICS, metric_score, check_edge_metric, check_node_metric, check_lp_cap,
+                            check_cap_consistency)
 
 import os
 from typing import Optional, Tuple
 import networkx as nx
 import numpy as np
 import pandas as pd
-import igraph as ig
 import napypi as napy
 import logging
 
@@ -15,10 +17,10 @@ import logging
 # Differential network computation
 def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
                          edge_metric: Optional[str] = None, node_metric: Optional[str] = None,
-                         max_path_length: int = 2, correction: str = 'bh', num_workers: int = 1,
+                         lp_cap: Optional[float] = None, correction: str = 'bh', correction_scope: str = 'global', num_workers: int = 1,
                          path: Optional[str] = None, format: str = 'csv',
                          meta_file: Optional[pd.DataFrame] = None, test_type: str = 'nonparametric', nan_value: Optional[int] = None,
-                         name1: str = 'context1', name2: str = 'context2') -> Tuple[pd.Series | pd.DataFrame | None, pd.Series | pd.DataFrame | None]:
+                         name1: str = 'context1', name2: str = 'context2') -> Tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
     """
     Computation of a differential network defined by a node metric and an edge metric.
     
@@ -28,19 +30,26 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param context2: Observed data of Context 2, potentially filtered.
     :param edge_metric: Edge metric used to construct the differential network.
     :param node_metric: Node metric used to construct the differential network.
-    :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
+    :param lp_cap: Cap for -log10(p) used by the capped product metrics ('<...>-LPxRE-cap', '<...>-LPxVE-cap'), which are only available when it is set. Other metrics are not affected. Defaults to None.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
+    :param correction_scope: Scope of the multiple-testing correction for STC: 'global' (all nodes in one family) or 'local' (nodes corrected separately per test type used to compare them across contexts). Defaults to 'global'.
     :param num_workers: Number of workers for parallel computation of STC. Defaults to 1.
     :param path: Optional path to save the differential scores as CSV files. Defaults to None.
     :param format: File format to save the differential network. Options are 'csv' and 'graphml'. Defaults to 'csv'.
-    :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
-    :param test_type: Test type to use for continuous nodes in STC metric. Defaults to 'nonparametric'.
+    :param meta_file: Meta file containing the node types. Only needed for the STC node metrics. Defaults to None.
+    :param test_type: Test type to use for continuous nodes in the STC node metrics. Defaults to 'nonparametric'.
     :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
     :return: A tuple (edges_diff, nodes_diff, edge_node_stats) containing the computed differential edges,
              differential nodes, and per-node statistics over incident edges (None if no edge_metric).
     """
     if edge_metric is None and node_metric is None:
         raise ValueError('Please provide at least one of edge_metric or node_metric to compute the differential network.')
+    if edge_metric is not None:
+        check_edge_metric(edge_metric)
+    if node_metric is not None:
+        check_node_metric(node_metric)
+    lp_cap = check_lp_cap(lp_cap)
+    check_cap_consistency(edge_metric, node_metric, lp_cap)
     edges_diff = None
     nodes_diff = None
     edge_node_stats = None
@@ -54,7 +63,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
 
     # Edges
     if edge_metric is not None:
-        edges_diff, edge_node_stats = compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, max_path_length=max_path_length, name1=name1, name2=name2)
+        edges_diff, edge_node_stats = compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, lp_cap=lp_cap, name1=name1, name2=name2)
         # scores1/scores2 are already reconciled above, so compute_diff_edges' own (redundant)
         # reconciliation pass finds nothing left to remove -- overwrite with the list found here,
         # which reflects what was actually removed for this differential network.
@@ -63,7 +72,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     # Nodes
     if node_metric is not None:
         nodes_diff = compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
-                                         node_metric=node_metric, correction=correction, meta_file=meta_file, test_type=test_type, nan_value=nan_value, num_workers=num_workers)
+                                         node_metric=node_metric, lp_cap=lp_cap, correction=correction, correction_scope=correction_scope, meta_file=meta_file, test_type=test_type, nan_value=nan_value, num_workers=num_workers)
         nodes_diff.attrs['removed_variables'] = removed_variables
 
     if path is not None:
@@ -94,167 +103,45 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     return edges_diff, nodes_diff, edge_node_stats
 
 
-# Adjusted DrDimont implementation to compute integrated interaction scores
-def interaction_score(data, max_path_length=3, metric='rescaled-E'):
-    if max_path_length >= 5:
-        raise ValueError('The maximum path length considered in interaction scores has to be smaller than 5.')
-    data_extended = data.copy()
-
-    # Create network
-    # Nodes
-    graph = ig.Graph()
-    nodes = pd.unique(data[['label1', 'label2']].values.ravel())
-    graph.add_vertices(nodes)
-    # Edges
-    edges = list(zip(data['label1'], data['label2']))
-    graph.add_edges(edges)
-    # Edge weights
-    graph.es[metric] = data[metric].tolist()
-
-    # Loop through all edges
-    for idx, row in data.iterrows():
-        # Extract edge
-        edge = (row['label1'], row['label2'])
-
-        # Initialize variables
-        sums_of_weight_products = [0] * max_path_length
-        num_paths = [0] * max_path_length
-
-        # Find all paths between the two extracted nodes and loop through them
-        simple_paths = graph.get_all_simple_paths(edge[0], edge[1], maxlen=max_path_length)
-        for path in simple_paths:
-            # Get path length
-            path_length = len(path) - 1
-            # Add the product of the weights along the path to the corresponding sum 
-            sums_of_weight_products[path_length - 1] += np.prod([graph.es.find(_source=path[i], _target=path[i+1])[metric] for i in range(path_length)])
-            # Increase the count of paths of this length
-            num_paths[path_length - 1] += 1
-
-        sums_of_weight_products = np.array(sums_of_weight_products, dtype=float)
-        num_paths = np.array(num_paths, dtype=float)
-
-        # Normalize the sums by the number of paths of the corresponding length
-        normalized_sums = np.divide(sums_of_weight_products, num_paths, out=np.zeros_like(num_paths), where=num_paths != 0)
-
-        # Sum up the normalized sums and save as interaction score
-        edge_score = np.sum(normalized_sums)
-        data_extended.loc[idx, 'raw-IS'] = edge_score
-
-    return data_extended
+# Per-node weighted degree in one context: sum of |score| over the incident edges
+def _weighted_degree(scores, col, nodes):
+    w = scores[col].abs().to_numpy(dtype=float)
+    long = pd.DataFrame({'node': np.concatenate([scores['label1'].to_numpy(), scores['label2'].to_numpy()]),
+                         'w': np.concatenate([w, w])})
+    return long.groupby('node')['w'].sum().reindex(nodes, fill_value=0.0)
 
 
-# Calculate differential (weighted) degree centralities
-def degree_centrality(nodes_diff, scores1, scores2, metric='DC-P'):
-    if 'W' in metric:
-        if metric == 'WDC-P':
-            met = 'inv-P'
-        elif metric == 'WDC-L-P':
-            met = 'log-P'
-        elif metric == 'WDC-E':
-            met = 'rescaled-E'
-        else:
-            raise ValueError(f"Invalid metric '{metric}' for weighted degree centrality.")
-    else:
-        if metric == 'DC-P':
-            met = 'raw-P'
-        elif metric == 'DC-E':
-            met = 'rescaled-E'
-        else:
-            raise ValueError(f"Invalid metric '{metric}' for degree centrality.")
-
-    # Ensure the p-value transform columns are present (safety for direct-API calls)
-    if met in ('inv-P', 'log-P') and met not in scores1.columns:
-        scores1 = add_pval_transforms(scores1)
-        scores2 = add_pval_transforms(scores2)
+# Calculate differential weighted degree centralities (WDC-<score>)
+def degree_centrality(nodes_diff, scores1, scores2, metric='WDC-P', lp_cap: Optional[float] = None):
+    if not metric.startswith('WDC-'):
+        raise ValueError(f"Invalid metric '{metric}' for weighted degree centrality.")
+    score = metric_score(metric)
+    scores1, scores2 = add_score_columns(scores1, scores2, lp_cap=lp_cap)
 
     nodes_diff = nodes_diff.copy()
-    nodes = nodes_diff.index
-    degree_centrality = pd.DataFrame()
-    degree_centrality['labels'] = nodes
-    degree_centrality.set_index('labels', inplace=True)
-    degree_centrality['context_a'] = np.nan
-    degree_centrality['context_b'] = np.nan
-
-    # TODO: optimize implementation according to DimontRank implementation using defaultdict
-    if 'W' in metric:
-        # Sum up absolute weights of incident edges (abs handles signed probit-E)
-        for node in nodes:
-            sum1 = 0
-            sum2 = 0
-            for i in scores1.index:
-                if (scores1.loc[i, 'label1'] == node) or (scores1.loc[i, 'label2'] == node):
-                    sum1 += abs(scores1.loc[i, met])
-
-            for i in scores2.index:
-                if (scores2.loc[i, 'label1'] == node) or (scores2.loc[i, 'label2'] == node):
-                    sum2 += abs(scores2.loc[i, met])
-
-            degree_centrality.loc[node, 'context_a'] = sum1
-            degree_centrality.loc[node, 'context_b'] = sum2
-
-    else:
-        for node in nodes:
-            count1 = 0
-            count2 = 0
-
-            for i in scores1.index:
-                if (scores1.loc[i, 'label1'] == node) or (scores1.loc[i, 'label2'] == node):
-                    if met == 'raw-P':
-                        if scores1.loc[i, met] != 1:
-                            count1 += 1
-                    elif met == 'rescaled-E':
-                        if scores1.loc[i, met] != 0:
-                            count1 += 1
-                    else:
-                        raise ValueError(f"Invalid metric '{metric}' for degree centrality.")
-
-            for i in scores2.index:
-                if (scores2.loc[i, 'label1'] == node) or (scores2.loc[i, 'label2'] == node):
-                    if met == 'raw-P':
-                        if scores2.loc[i, met] != 1:
-                            count2 += 1
-                    elif met == 'rescaled-E':
-                        if scores2.loc[i, met] != 0:
-                            count2 += 1
-                    else:
-                        raise ValueError(f"Invalid metric '{metric}' for degree centrality.")
-
-            degree_centrality.loc[node, 'context_a'] = count1
-            degree_centrality.loc[node, 'context_b'] = count2
+    degree1 = _weighted_degree(scores1, score, nodes_diff.index)
+    degree2 = _weighted_degree(scores2, score, nodes_diff.index)
 
     # Normalize by max
-    max1 = max(degree_centrality['context_a'])
-    max2 = max(degree_centrality['context_b'])
-
-    if max1 == 0.:
-        max1 = 1.
-    if max2 == 0.:
-        max2 = 1.
+    max1 = degree1.max() if len(degree1) and degree1.max() > 0 else 1.0
+    max2 = degree2.max() if len(degree2) and degree2.max() > 0 else 1.0
 
     # Absolute difference
-    nodes_diff[metric] = abs((degree_centrality['context_a'] / max1) - (degree_centrality['context_b'] / max2))
+    nodes_diff[metric] = (degree1 / max1 - degree2 / max2).abs()
 
     return nodes_diff
 
 
-# Compute differential PageRank centrality
-def pagerank_centrality(nodes_diff, scores1, scores2, metric='PRC-P'):
-    scores1 = scores1.copy()
-    scores2 = scores2.copy()
-
-    # Set the edge 'weight' column as a significance/effect strength (higher = stronger)
-    if metric in ('PRC-P', 'PRC-L-P'):
-        col = 'inv-P' if metric == 'PRC-P' else 'log-P'
-        if col not in scores1.columns:
-            scores1 = add_pval_transforms(scores1)
-            scores2 = add_pval_transforms(scores2)
-        scores1['weight'] = scores1[col]
-        scores2['weight'] = scores2[col]
-    elif metric == 'PRC-E':
-        scores1['weight'] = np.abs(scores1['rescaled-E'])
-        scores2['weight'] = np.abs(scores2['rescaled-E'])
-    else:
+# Compute differential PageRank centrality (PRC-<score>)
+def pagerank_centrality(nodes_diff, scores1, scores2, metric='PRC-P', lp_cap: Optional[float] = None):
+    if not metric.startswith('PRC-'):
         raise ValueError(f"Invalid metric '{metric}' for PageRank centrality.")
+    score = metric_score(metric)
+    scores1, scores2 = add_score_columns(scores1, scores2, lp_cap=lp_cap)
+
+    # Edge weight = |score| (PageRank requires non-negative weights; higher = stronger)
+    scores1['weight'] = scores1[score].abs()
+    scores2['weight'] = scores2[score].abs()
 
     # Create network and apply pagerank algorithm
     network1 = nx.from_pandas_edgelist(scores1, 'label1', 'label2', 'weight')
@@ -263,8 +150,8 @@ def pagerank_centrality(nodes_diff, scores1, scores2, metric='PRC-P'):
     ranking2 = nx.pagerank(network2)
 
     # Normalize by max
-    max1 = max(ranking1.values())
-    max2 = max(ranking2.values())
+    max1 = max(ranking1.values(), default=0.0) or 1.0
+    max2 = max(ranking2.values(), default=0.0) or 1.0
 
     nodes_diff[metric] = nodes_diff.index.map(
         lambda node: abs((ranking1.get(node, 0) / max1) - (ranking2.get(node, 0) / max2))
@@ -273,8 +160,12 @@ def pagerank_centrality(nodes_diff, scores1, scores2, metric='PRC-P'):
     return nodes_diff
 
 
-# Compute absolute mean difference and statistical significance for each node between two contexts
-def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric', correction='bh', nan_value: Optional[int] = None, num_workers: int = 1):
+# Statistical test centrality (STC-<score>): test for each node whether its distribution differs between
+# the two contexts and derive all node scores from the test's adjusted p-value and effect size.
+def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric', correction='bh', nan_value: Optional[int] = None,
+                         num_workers: int = 1, correction_scope: str = 'global', lp_cap: Optional[float] = None):
+    check_correction_scope(correction_scope)
+    lp_cap = check_lp_cap(lp_cap)
     if not context1.columns.equals(context2.columns):
         raise ValueError('Context a and b need to have the same structure.')
     
@@ -314,13 +205,13 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
     nodes = context1.columns
     nodes_diff = pd.DataFrame(index=nodes)
     nodes_diff['test_p'] = 1.0
-    nodes_diff['STC'] = 0.0
+    nodes_diff['test_E'] = 0.0
+    nodes_diff['test_type'] = None
 
-    # Initialize p-values
-    p_nom = {}
-    p_ord = {}
-    p_bi = {}
-    p_cont = {}
+    # Unadjusted p-values, effect sizes and the test used, per node
+    p_vals = {}
+    e_vals = {}
+    node_test = {}
 
     # Separate data types
     ord1, nom1, cont1, bi1 = _separate_types(context1, meta_file)
@@ -332,41 +223,37 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
     # data types pooled into one family) is applied below, rather than napy's per-type correction.
     return_p = 'p_unadjusted'
 
-    # nominal
-    if nom1.shape[1] > 0:
-        combined = pd.concat([nom1, nom2], axis=0)
-        combined = _order_categories(combined, nan_value=nan_value)
-        combined['context'] = [0] * len(nom1) + [1] * len(nom2)
-        combined, colnames = _df_to_numpy(combined)
-        
-        result = napy.chi_squared(combined, axis=1, threads=num_workers, use_numba=False, return_types=[return_p], nan_value=nan_value)[return_p]
-        result_df = pd.DataFrame(result, index=colnames, columns=colnames)
-        p_nom = result_df['context'].drop('context')
-        p_nom = p_nom.to_dict()
+    def _collect(colnames, p, e, test):
+        p_vals.update(zip(colnames, np.asarray(p, dtype=float).tolist()))
+        e_vals.update(zip(colnames, np.asarray(e, dtype=float).tolist()))
+        node_test.update(dict.fromkeys(colnames, test))
 
-    # ordinal
+    # nominal and binary: chi-squared test of the variable against the context label (Cramér's V)
+    for cat1, cat2 in ((nom1, nom2), (bi1, bi2)):
+        if cat1.shape[1] > 0:
+            return_e = TEST_EFFECT_SIZES['chi2']
+            combined = pd.concat([cat1, cat2], axis=0)
+            combined = _order_categories(combined, nan_value=nan_value)
+            combined['context'] = [0] * len(cat1) + [1] * len(cat2)
+            combined, colnames = _df_to_numpy(combined)
+
+            result = napy.chi_squared(combined, axis=1, threads=num_workers, use_numba=False, return_types=[return_p, return_e], nan_value=nan_value)
+            p = pd.DataFrame(result[return_p], index=colnames, columns=colnames)['context'].drop('context')
+            e = pd.DataFrame(result[return_e], index=colnames, columns=colnames)['context'].drop('context')
+            _collect(p.index, p.to_numpy(), e.reindex(p.index).to_numpy(), 'chi2')
+
+    # ordinal: Mann-Whitney U test between the contexts (rank-biserial correlation)
     if ord1.shape[1] > 0:
+        return_e = TEST_EFFECT_SIZES['mwu']
         context_info = pd.DataFrame({'context': [0] * len(ord1) + [1] * len(ord2)})
         context_info, _ = _df_to_numpy(context_info)
         combined = pd.concat([ord1, ord2], axis=0)
         combined, colnames = _df_to_numpy(combined)
         
-        result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = num_workers, return_types = [return_p], use_numba=False, nan_value=nan_value)[return_p]
-        p_ord = dict(zip(colnames, result[0].tolist()))
+        result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = num_workers, return_types = [return_p, return_e], use_numba=False, nan_value=nan_value)
+        _collect(colnames, result[return_p][0], result[return_e][0], 'mwu')
 
-    # binary
-    if bi1.shape[1] > 0:
-        combined = pd.concat([bi1, bi2], axis=0)
-        combined = _order_categories(combined, nan_value=nan_value)
-        combined['context'] = [0] * len(bi1) + [1] * len(bi2)
-        combined, colnames = _df_to_numpy(combined)
-        
-        result = napy.chi_squared(combined, axis=1, threads=num_workers, use_numba=False, return_types=[return_p], nan_value=nan_value)[return_p]
-        result_df = pd.DataFrame(result, index=colnames, columns=colnames)
-        p_bi = result_df['context'].drop('context')
-        p_bi = p_bi.to_dict()
-
-    # continuous
+    # continuous: t-test (Cohen's d, converted to point-biserial r) or Mann-Whitney U test (rank-biserial correlation)
     if cont1.shape[1] > 0:
         context_info = pd.DataFrame({'context': [0] * len(cont1) + [1] * len(cont2)})
         context_info, _ = _df_to_numpy(context_info)
@@ -374,46 +261,93 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
         combined, colnames = _df_to_numpy(combined)
 
         if test_type == 'parametric':
-            result = napy.ttest(bin_data = context_info, cont_data = combined, axis = 1, threads = num_workers, use_numba=False, return_types=[return_p], nan_value=nan_value)[return_p]
+            return_e = TEST_EFFECT_SIZES['ttest']
+            result = napy.ttest(bin_data = context_info, cont_data = combined, axis = 1, threads = num_workers, use_numba=False, return_types=[return_p, return_e], nan_value=nan_value)
+            # NApy returns Cohen's d negated (group0 - group1), see context_net_inference.py; flip it
+            # to the usual convention and convert to point-biserial r with the per-node group sizes
+            # (NApy's 'n' is the total number of non-missing values only).
+            d = -np.asarray(result[return_e][0], dtype=float)
+            n1 = (cont1 != nan_value).sum().to_numpy(dtype=float)
+            n2 = (cont2 != nan_value).sum().to_numpy(dtype=float)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                e = np.where((n1 > 0) & (n2 > 0), d / np.sqrt(d ** 2 + (n1 + n2) ** 2 / (n1 * n2)), np.nan)
+            _collect(colnames, result[return_p][0], e, 'ttest')
         elif test_type == 'nonparametric':
-            result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = num_workers, use_numba=False, return_types = [return_p], nan_value=nan_value)[return_p]
+            return_e = TEST_EFFECT_SIZES['mwu']
+            result = napy.mwu(bin_data = context_info, cont_data = combined, axis = 1, threads = num_workers, use_numba=False, return_types = [return_p, return_e], nan_value=nan_value)
+            _collect(colnames, result[return_p][0], result[return_e][0], 'mwu')
         else:
             raise ValueError(f"Invalid test type '{test_type}' for continuous nodes. Choose from 'parametric' or 'nonparametric'.")
-        
-        p_cont = dict(zip(colnames, result[0].tolist()))
 
-    # Pool the unadjusted p-values from all data types into one family and apply a single
-    # multiple-testing correction across all tested nodes. STC = 1 - adjusted p-value.
-    # Nodes without a test keep the default test_p=1.0, STC=0.0 and are excluded from the family.
-    pvals = pd.Series({**p_ord, **p_nom, **p_bi, **p_cont})
+    # Multiple-testing correction across the tested nodes.
+    #   'global': unadjusted p-values from all data types pooled into one family.
+    #   'local':  one family per test type used for the node (chi2 for nominal and binary nodes, mwu for
+    #             ordinal nodes, ttest or mwu for continuous nodes depending on test_type).
+    # Nodes without a test keep the default test_p=1.0, test_E=0.0 and are excluded from the family.
+    pvals = pd.Series(p_vals, dtype=float)
     if not pvals.empty:
-        pvals[:] = fdr_correction(pvals.to_numpy(), method=correction)
+        node_groups = pvals.index.map(node_test).to_numpy() if correction_scope == 'local' else None
+        pvals[:] = fdr_correction(pvals.to_numpy(), method=correction, groups=node_groups)
         nodes_diff.loc[pvals.index, 'test_p'] = pvals
-        nodes_diff.loc[pvals.index, 'STC'] = 1 - pvals
+        nodes_diff.loc[pvals.index, 'test_E'] = pd.Series(e_vals, dtype=float)
+        nodes_diff.loc[pvals.index, 'test_type'] = pvals.index.map(node_test)
 
-    # In case a test failed and returned NaN, set p-value to 1.0
+    # In case a test failed and returned NaN, set p-value to 1.0 and effect size to 0.0
     nodes_diff['test_p'] = nodes_diff['test_p'].fillna(1.0)
-    nodes_diff['STC'] = nodes_diff['STC'].fillna(0.0)
+    nodes_diff['test_E'] = nodes_diff['test_E'].fillna(0.0)
+
+    # Node scores, analogous to the per-context edge scores (see statistics_utils.add_score_columns).
+    # The sign of the effect only encodes which context is higher, so the absolute effect is used.
+    p = nodes_diff['test_p'].to_numpy(dtype=float)
+    abs_e = nodes_diff['test_E'].abs().to_numpy(dtype=float)
+    lp = _neglog10_p(p)
+    # RE: rank-based probit rescaling of |effect| within each test family (as for edges per test type)
+    re = np.zeros(len(nodes_diff))
+    tests = nodes_diff['test_type'].to_numpy()
+    for test in pd.unique(tests[pd.notna(tests)]):
+        idx = tests == test
+        re[idx] = _probit_magnitude(abs_e[idx])
+    # VE: Cramér's V, rank-biserial and point-biserial correlations are all r-like -> r²
+    ve = abs_e ** 2
+
+    nodes_diff['STC-P'] = 1.0 - p
+    nodes_diff['STC-LP'] = lp
+    nodes_diff['STC-RE'] = re
+    nodes_diff['STC-VE'] = ve
+    nodes_diff['STC-LPxRE'] = lp * re
+    nodes_diff['STC-LPxVE'] = lp * ve
+    if lp_cap is not None:
+        lp_capped = np.minimum(lp, lp_cap)
+        nodes_diff['STC-LPxRE-cap'] = lp_capped * re
+        nodes_diff['STC-LPxVE-cap'] = lp_capped * ve
 
     return nodes_diff
 
 
 # Differential edge computation
-def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric: str , max_path_length: int = 2,
-                       path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> pd.DataFrame | None | pd.Series:
+def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric: str, lp_cap: Optional[float] = None,
+                       path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Compute differential edge scores based on the specified edge metric.
+
+    Every edge metric is built from per-context scores (see statistics_utils.add_score_columns):
+    'diff-<score>' is the absolute between-context difference of one score (P, LP, RE, VE, LPxRE,
+    LPxVE, LPxRE-cap or LPxVE-cap), and 'sum-LP-VE' / 'sum-LP-RE' add up the absolute differences of
+    LP and VE / RE.
 
     :param scores1: Statistical association scores of Context 1, rescaled and potentially filtered.
     :param scores2: Statistical association scores of Context 2, rescaled and potentially filtered.
     :param edge_metric: Edge metric to compute the differential edge scores.
-    :param max_path_length: Maximum length of paths to consider in the computation of integrated interaction scores. Defaults to 2.
+    :param lp_cap: Cap for -log10(p) used by the capped product metrics 'diff-LPxRE-cap' and 'diff-LPxVE-cap', which require it. Defaults to None.
     :param path: Optional path to save the differential edge scores as a CSV file. Defaults to None.
     :param name1: Name of Context 1, used to label the per-context ``raw-P``/``raw-E`` columns. Defaults to 'context1'.
     :param name2: Name of Context 2, used to label the per-context ``raw-P``/``raw-E`` columns. Defaults to 'context2'.
     :return: A tuple (edges_diff, edge_node_stats): the computed differential edge scores and a
              node-indexed DataFrame of per-node statistics over incident edges (see edge_node_statistics).
     """
+    check_edge_metric(edge_metric)
+    lp_cap = check_lp_cap(lp_cap)
+    check_cap_consistency(edge_metric, None, lp_cap)
 
     # Remove variables flagged (single observed category, or entirely missing) in only one of
     # the two contexts, so scores1/scores2 are row-aligned for the subtraction below. This also
@@ -422,101 +356,26 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
     # straight from CSV).
     scores1, scores2, _, _, removed_variables = reconcile_flagged_variables(scores1, scores2)
 
-    # Snapshot the per-context raw p-values and effect sizes before any metric-specific
-    # reassignment of scores1/scores2 (e.g. int-IS-E). Merged back onto the result below
+    # Snapshot the per-context raw p-values and effect sizes. Merged back onto the result below
     # so downstream tools can show both contexts' statistics per edge.
     raw_cols1 = scores1[['label1', 'label2', 'raw-P', 'raw-E']].rename(
         columns={'raw-P': f'raw-P_{name1}', 'raw-E': f'raw-E_{name1}'})
     raw_cols2 = scores2[['label1', 'label2', 'raw-P', 'raw-E']].rename(
         columns={'raw-P': f'raw-P_{name2}', 'raw-E': f'raw-E_{name2}'})
 
+    scores1, scores2 = add_score_columns(scores1, scores2, lp_cap=lp_cap)
+
+    # Sum the absolute differences of the metric's score components
     edges_diff = None
+    for score in EDGE_METRICS[edge_metric]:
+        part = _subtract_edges(scores1, scores2, values=score, metric=score)
+        if edges_diff is None:
+            edges_diff = part[['label1', 'label2', 'test_type']].copy()
+            edges_diff[edge_metric] = 0.0
+        edges_diff[edge_metric] += part[score]
 
-    # Multiple-testing adjusted p-value (diff-P)
-    if edge_metric == 'diff-P':
-        edges_diff = _subtract_edges(scores1, scores2, values='raw-P', metric=edge_metric)
-
-    # Rescaled interaction score (int-IS-E)
-    elif edge_metric == 'int-IS-E':
-        if 'rescaled-E' not in scores1.columns:
-            scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
-        scores1 = interaction_score(scores1, metric='rescaled-E', max_path_length=max_path_length)
-        scores2 = interaction_score(scores2, metric='rescaled-E', max_path_length=max_path_length)
-        edges_diff = _subtract_edges(scores1, scores2, values='raw-IS', metric=edge_metric)
-
-    # Absolute difference of rescaled effect sizes (diff-E)
-    elif edge_metric == 'diff-E':
-        if 'rescaled-E' not in scores1.columns:
-            scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
-        edges_diff = _subtract_edges(scores1, scores2, values='rescaled-E', metric=edge_metric)
-
-    # Absolute difference of r²-transformed effect sizes (diff-T-E). Unlike diff-E's rank-based
-    # rescaling, transformed-E converts each test type's effect size onto an absolute r² scale
-    # via known statistical conversions (see effect_size_to_r2), so it is comparable across
-    # contexts and test types without depending on the observed sample's rank distribution.
-    elif edge_metric == 'diff-T-E':
-        if 'transformed-E' not in scores1.columns:
-            scores1, scores2 = effect_size_to_r2(scores1, scores2, metric='transformed-E')
-        edges_diff = _subtract_edges(scores1, scores2, values='transformed-E', metric=edge_metric)
-
-    # Sum of diff-P and diff-E (sum-diff-PE) — naive raw-scale baseline (no normalization,
-    # so diff-E dominates the larger range). The signed form mixes p-value and effect-size
-    # directions; use 'sum-diff-L-PE' for the direction-coherent variant.
-    elif edge_metric == 'sum-diff-PE':
-        if 'rescaled-E' not in scores1.columns:
-            scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
-        edges_diff = _subtract_edges(scores1, scores2, values='rescaled-E', metric='diff-E')
-        edges_diff2 = _subtract_edges(scores1, scores2, values='raw-P', metric='diff-P')
-        edges_diff[edge_metric] = edges_diff2['diff-P'] + edges_diff['diff-E']
-        edges_diff['sum-diff-PE_signed'] = (scores1['raw-P'] - scores2['raw-P']) + \
-                                           (scores1['rescaled-E'] - scores2['rescaled-E'])
-
-    # Sum of diff-L-P and diff-E (sum-diff-L-PE) — raw-scale baseline. Uses log-P so the
-    # signed form is direction-coherent: both terms increase when context 1 is stronger
-    # (more significant and larger effect).
-    elif edge_metric == 'sum-diff-L-PE':
-        if 'rescaled-E' not in scores1.columns:
-            scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
-        if 'log-P' not in scores1.columns:
-            scores1 = add_pval_transforms(scores1)
-            scores2 = add_pval_transforms(scores2)
-        edges_diff = _subtract_edges(scores1, scores2, values='rescaled-E', metric='diff-E')
-        edges_diff2 = _subtract_edges(scores1, scores2, values='log-P', metric='diff-L-P')
-        edges_diff[edge_metric] = edges_diff2['diff-L-P'] + edges_diff['diff-E']
-        edges_diff[edge_metric + '_signed'] = (scores1['log-P'] - scores2['log-P']) + \
-                                              (scores1['rescaled-E'] - scores2['rescaled-E'])
-
-    # Absolute difference of log-p × rescaled effect size (diff-L-PE, formerly LS-PE)
-    elif edge_metric == 'diff-L-PE':
-        if 'rescaled-E' not in scores1.columns:
-            scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
-        if 'log-P' not in scores1.columns:
-            scores1 = add_pval_transforms(scores1)
-            scores2 = add_pval_transforms(scores2)
-
-        # log-P (= -log10(raw-P)) * rescaled-E, per context
-        values1 = (scores1['log-P'] * scores1['rescaled-E']).to_numpy()
-        values2 = (scores2['log-P'] * scores2['rescaled-E']).to_numpy()
-        values1 = np.where(values1 == -0.0, 0.0, values1)
-        values2 = np.where(values2 == -0.0, 0.0, values2)
-        scores1['raw-L-PE'] = values1
-        scores2['raw-L-PE'] = values2
-
-        edges_diff = _subtract_edges(scores1, scores2, values='raw-L-PE', metric=edge_metric)
-
-    # Absolute difference of -log10(raw-P) (diff-L-P)
-    elif edge_metric == 'diff-L-P':
-        if 'log-P' not in scores1.columns:
-            scores1 = add_pval_transforms(scores1)
-            scores2 = add_pval_transforms(scores2)
-        edges_diff = _subtract_edges(scores1, scores2, values='log-P', metric=edge_metric)
-
-    else:
-        raise ValueError(f"Invalid edge metric '{edge_metric}'. Choose from: 'diff-P', 'int-IS-E', 'diff-E', 'diff-T-E', 'sum-diff-PE', 'sum-diff-L-PE', 'diff-L-PE', or 'diff-L-P'.")
-
-    # Extract only the relevant columns (eliminate intermediary columns used for computation)
-    edge_metric_signed = edge_metric + '_signed'
-    edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric, edge_metric_signed]]
+    # Extract only the relevant columns
+    edges_diff = edges_diff[['label1', 'label2', 'test_type', edge_metric]]
 
     # Attach each context's raw p-value and effect size (matched on the variable pair).
     edges_diff = edges_diff.merge(raw_cols1, on=['label1', 'label2'], how='left')
@@ -587,23 +446,35 @@ def edge_node_statistics(edges_diff: pd.DataFrame, edge_metric: str) -> pd.DataF
 def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
                         node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None, test_type: str = 'nonparametric', 
                         nan_value: Optional[int] = None, num_workers: int = 1,
-                        path: Optional[str] = None) -> pd.DataFrame | None | pd.Series:
+                        path: Optional[str] = None, correction_scope: str = 'global', lp_cap: Optional[float] = None) -> pd.DataFrame:
     """
     Compute differential node scores based on the specified node metric.
+
+    Node metrics are '<family>-<score>' with family WDC (weighted degree centrality), PRC (PageRank
+    centrality) or STC (statistical test centrality) and score P, LP, RE, VE, LPxRE, LPxVE,
+    LPxRE-cap or LPxVE-cap (see statistics_utils.add_score_columns). WDC and PRC use the score as
+    edge weight in each context and take the absolute difference of the max-normalised
+    centralities; STC tests each node between the contexts and derives the score from the test's
+    adjusted p-value and effect size.
 
     :param scores1: Statistical association scores of Context 1, rescaled and potentially filtered.
     :param scores2: Statistical association scores of Context 2, rescaled and potentially filtered.
     :param context1: Observed data of Context 1, potentially filtered.
     :param context2: Observed data of Context 2, potentially filtered.
     :param node_metric: Node metric to compute the differential node scores.
-    :param correction: Correction method for multiple testing. Only needed if node_metric is 'STC'. Defaults to 'bh'.
-    :param meta_file: Meta file containing the node types. Only needed if node_metric is 'STC'. Defaults to None.
-    :param test_type: Test type to compare continuous variables across contexts for the 'STC' node metric. Defaults to 'nonparametric'.
+    :param correction: Correction method for multiple testing. Only needed for the STC node metrics. Defaults to 'bh'.
+    :param meta_file: Meta file containing the node types. Only needed for the STC node metrics. Defaults to None.
+    :param test_type: Test type to compare continuous variables across contexts for the STC node metrics. Defaults to 'nonparametric'.
     :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
-    :param num_workers: Number of workers for parallel computation of STC. Only needed if node_metric is 'STC'. Defaults to 1.
+    :param num_workers: Number of workers for parallel computation of STC. Only needed for the STC node metrics. Defaults to 1.
     :param path: Optional path to save the differential node scores as a CSV file. Defaults to None.
+    :param correction_scope: Scope of the multiple-testing correction for STC: 'global' (all nodes in one family) or 'local' (nodes corrected separately per test type used to compare them across contexts). Defaults to 'global'.
+    :param lp_cap: Cap for -log10(p) used by the capped product metrics ('<family>-LPxRE-cap', '<family>-LPxVE-cap'), which require it. Defaults to None.
     :return: A DataFrame containing the computed differential node scores.
     """
+    check_node_metric(node_metric)
+    lp_cap = check_lp_cap(lp_cap)
+    check_cap_consistency(None, node_metric, lp_cap)
     assert context1.columns.equals(context2.columns), 'Context a and b need to have the same structure.'
 
     # Remove variables flagged (single observed category, or entirely missing) in only one of
@@ -622,53 +493,22 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     nodes = context1.columns
     nodes_diff = pd.DataFrame(index=nodes)
 
-    # Statistical test centrality (STC)
-    if node_metric == 'STC':
+    family = node_metric.split('-', 1)[0]
+
+    # Statistical test centrality (STC-<score>)
+    if family == 'STC':
         if meta_file is None:
-            raise ValueError("To compute the 'STC' node metric, please provide a 'meta_file' containing the node types.")
-        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, meta_file=meta_file, test_type=test_type, nan_value=nan_value, num_workers=num_workers)
+            raise ValueError(f"To compute the '{node_metric}' node metric, please provide a 'meta_file' containing the node types.")
+        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, correction_scope=correction_scope, meta_file=meta_file, test_type=test_type, nan_value=nan_value, num_workers=num_workers, lp_cap=lp_cap)
 
-    # Degree centrality based on raw-P (DC-P)
-    elif node_metric == 'DC-P':
-        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='DC-P')
+    # Weighted degree centrality (WDC-<score>)
+    elif family == 'WDC':
+        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric=node_metric, lp_cap=lp_cap)
 
-    # Degree centrality based on rescaled-E (DC-E)
-    elif node_metric == 'DC-E':
-        if 'rescaled-E' not in scores1.columns:
-            scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
-        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='DC-E')
-
-    # Weighted degree centrality based on inv-P = 1 - p (WDC-P)
-    elif node_metric == 'WDC-P':
-        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='WDC-P')
-
-    # Weighted degree centrality based on log-P = -log10(p) (WDC-L-P)
-    elif node_metric == 'WDC-L-P':
-        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='WDC-L-P')
-
-    # Weighted degree centrality based on rescaled-E (WDC-E)
-    elif node_metric == 'WDC-E':
-        if 'rescaled-E' not in scores1.columns:
-            scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
-        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='WDC-E')
-
-    # PageRank centrality based on rescaled-E (PRC-E)
-    elif node_metric == 'PRC-E':
-        if 'rescaled-E' not in scores1.columns:
-            scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
-        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='PRC-E')
-
-    # PageRank centrality based on inv-P = 1 - p (PRC-P)
-    elif node_metric == 'PRC-P':
-        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='PRC-P')
-
-    # PageRank centrality based on log-P = -log10(p) (PRC-L-P)
-    elif node_metric == 'PRC-L-P':
-        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric='PRC-L-P')
-
+    # PageRank centrality (PRC-<score>)
     else:
-        raise ValueError(f"Invalid node metric '{node_metric}'. Choose from: 'STC', 'DC-P', 'DC-E', 'WDC-P', 'WDC-L-P', 'WDC-E', 'PRC-P', 'PRC-L-P', or 'PRC-E'.")
-    
+        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric=node_metric, lp_cap=lp_cap)
+
     # Extract only the relevant columns (eliminate intermediary columns used for computation)
     nodes_diff = nodes_diff[[node_metric]]
 
@@ -688,9 +528,6 @@ def _subtract_edges(scores1, scores2, values, metric):
         raise ValueError('Context a and b need to have the same structure.')
 
     edges_diff = scores1[['label1', 'label2', 'test_type']].copy()
-
-    signed_metric = metric + '_signed'
-    edges_diff[signed_metric] = scores1[values] - scores2[values]
     edges_diff[metric] = abs(scores1[values] - scores2[values])
 
     return edges_diff

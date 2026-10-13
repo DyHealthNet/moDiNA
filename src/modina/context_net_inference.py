@@ -1,6 +1,6 @@
 # Adapted from https://github.com/DyHealthNet/DHN-backend.git
 
-from modina.statistics_utils import _df_to_numpy, _separate_types, add_pval_transforms, fdr_correction
+from modina.statistics_utils import _df_to_numpy, _separate_types, add_pval_transforms, fdr_correction, check_correction_scope
 
 import os
 import numpy as np
@@ -22,7 +22,8 @@ TEST_EFFECT_SIZES = {
 }
 
 
-def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89.0, correction='bh', n_min_valid=10) -> pd.DataFrame:
+def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_type='nonparametric', num_workers=1, nan_value=-89.0, correction='bh', n_min_valid=10, correction_scope='global') -> pd.DataFrame:
+    check_correction_scope(correction_scope)
     cont_data = cont_data.copy()
     if not cont_data.select_dtypes(include=[np.number]).shape[1] == cont_data.shape[1]:
         raise ValueError('Continuous data contains non-numeric columns.')
@@ -124,12 +125,20 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
         logging.warning(f"{int(low_n.sum())} pair(s) were tested on fewer than n_min_valid={n_min_valid} "
                         f"samples and will be excluded.")
 
-    # Single multiple-testing correction across ALL edges (all test types pooled into one FDR
-    # family), rather than napy's per-test-call correction. Applied on the deduplicated edges so
-    # each association is counted exactly once. Untested pairs stay NaN and are excluded; dummy
-    # associations (added later with p=1.0) are likewise not part of this family.
-    scores_final['raw-P'] = fdr_correction(scores_final['raw-P'].to_numpy(), method=correction)
-    logging.info("Finished single multiple-testing correction across all edges.")
+    # Multiple-testing correction, rather than napy's per-test-call correction. Applied on the
+    # deduplicated edges so each association is counted exactly once. Untested pairs stay NaN and
+    # are excluded; dummy associations (added later with p=1.0) are likewise not part of the family.
+    #   'global': all edges (all test types) pooled into one FDR family.
+    #   'local':  one FDR family per statistical test type (pearson, spearman, ttest, mwu, chi2,
+    #             anova, kruskal), so that e.g. the many Pearson tests between continuous variables
+    #             do not dominate the correction of the (far fewer) tests of other types.
+    #             Untested pairs (test_type None) have NaN p-values and are excluded anyway.
+    if correction_scope == 'local':
+        test_groups = scores_final['test_type'].fillna('untested').to_numpy()
+    else:
+        test_groups = None
+    scores_final['raw-P'] = fdr_correction(scores_final['raw-P'].to_numpy(), method=correction, groups=test_groups)
+    logging.info(f"Finished multiple-testing correction across edges (scope: {correction_scope}).")
 
     return scores_final
 
@@ -138,7 +147,8 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
                            test_type: str = 'nonparametric',
                            correction: str = 'bh', num_workers: int = 1,
                            path: Optional[str] = None, nan_value: Optional[float] = None,
-                           name: str = 'context1', n_min_valid: int = 10) -> pd.DataFrame:
+                           name: str = 'context1', n_min_valid: int = 10,
+                           correction_scope: str = 'global') -> pd.DataFrame:
     """
     Compute association scores for a given context.
 
@@ -151,8 +161,10 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
     :param name: Name of the context. Used for saving files. Defaults to 'context'.
     :param n_min_valid: Minimum number of samples (after pairwise removal of missing values) a pairwise test must be based on. Pairs below this are excluded from this context's network (and, during differential analysis, from the other context's as well). Defaults to 10.
+    :param correction_scope: Scope of the multiple-testing correction. 'global' pools all edges into one correction family; 'local' corrects separately within each statistical test type (e.g. Pearson, Spearman, t-test, Mann-Whitney U, chi-squared, Kruskal-Wallis). Defaults to 'global'.
     :return: A pd.DataFrame containing the computed association scores.
     """
+    check_correction_scope(correction_scope)
     # Check nan values and input format
     context, nan_value = _check_input_data(context=context_data, meta_file=meta_file, nan_value=nan_value)
 
@@ -167,7 +179,8 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     # Calculate scores
     scores = calculate_association_scores(ord_data=ord, nom_data=nom, cont_data=cont, bi_data=bi,
                                           test_type=test_type, num_workers=num_workers, nan_value=nan_value,
-                                          correction=correction, n_min_valid=n_min_valid)
+                                          correction=correction, n_min_valid=n_min_valid,
+                                          correction_scope=correction_scope)
 
     # Convert Cohen's d -> point-biserial r for ttest edges, using the binary group sizes of each
     # specific pair after pairwise removal of missing values (the samples the t-test actually
@@ -331,7 +344,7 @@ def napy_bi_cont(cont_phenotypes: pd.DataFrame, bi_phenotypes: pd.DataFrame, tes
         # docstring does not mention a group order). Uncorrected, every SIGNED binary-continuous
         # result is backwards relative to pearson 'r' / spearman 'rho' / mwu 'rb', which are all
         # conventional; a consistent flip does not cancel in a between-context difference, so it
-        # reverses the direction of diff-L-P_signed, diff-L-PE, diff-T-E and rescaled-E for these
+        # reverses the direction of signed effect sizes (rescaled-E and the RE / VE scores) for these
         # pairs. Magnitudes, two-sided p-values and AUCs are unaffected, which is why it went
         # unnoticed. Normalised here, at the boundary, so raw-E is conventionally signed for every
         # consumer downstream (including statistics_utils.cohens_d_to_r).
