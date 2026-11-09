@@ -184,15 +184,11 @@ def _probit_magnitude(abs_values):
 
 # Add the per-context score columns that every differential metric is built from (see
 # metrics.SCORE_TYPES): P = 1 - p, LP = -log10(p), RE = rank-based probit rescaled effect size,
-# VE = variance-explained effect size, and the products LPxRE and LPxVE. If lp_cap is set, the
-# capped products LPxRE-cap and LPxVE-cap use min(LP, lp_cap) instead of LP.
+# VE = variance-explained effect size, and the products LPxRE and LPxVE.
 # P, LP and VE are always recomputed from 'raw-P'/'raw-E' rather than reusing cached 'log-P',
 # 'inv-P' or 'transformed-E' columns. RE reuses 'rescaled-E' when both contexts already carry it,
 # as it is a joint cross-context transform that the pipeline computes before filtering.
-def add_score_columns(scores1, scores2, lp_cap=None):
-    from modina.metrics import check_lp_cap
-    lp_cap = check_lp_cap(lp_cap)
-
+def add_score_columns(scores1, scores2):
     if 'rescaled-E' in scores1.columns and 'rescaled-E' in scores2.columns:
         scores1 = scores1.copy()
         scores2 = scores2.copy()
@@ -211,10 +207,6 @@ def add_score_columns(scores1, scores2, lp_cap=None):
         # + 0.0 turns -0.0 into 0.0
         scores['LPxRE'] = lp * re + 0.0
         scores['LPxVE'] = lp * ve + 0.0
-        if lp_cap is not None:
-            lp_capped = np.minimum(lp, lp_cap)
-            scores['LPxRE-cap'] = lp_capped * re + 0.0
-            scores['LPxVE-cap'] = lp_capped * ve + 0.0
 
     return scores1, scores2
 

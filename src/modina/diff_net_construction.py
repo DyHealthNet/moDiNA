@@ -1,8 +1,7 @@
 from modina.statistics_utils import (_df_to_numpy, _separate_types, _neglog10_p, _probit_magnitude, add_score_columns,
                                      fdr_correction, reconcile_flagged_variables, check_correction_scope)
 from modina.context_net_inference import _order_categories, TEST_EFFECT_SIZES
-from modina.metrics import (EDGE_METRICS, metric_score, check_edge_metric, check_node_metric, check_lp_cap,
-                            check_cap_consistency)
+from modina.metrics import (EDGE_METRICS, metric_score, check_edge_metric, check_node_metric)
 
 import os
 from typing import Optional, Tuple
@@ -17,7 +16,7 @@ import logging
 # Differential network computation
 def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
                          edge_metric: Optional[str] = None, node_metric: Optional[str] = None,
-                         lp_cap: Optional[float] = None, correction: str = 'bh', correction_scope: str = 'global', num_workers: int = 1,
+                         correction: str = 'bh', correction_scope: str = 'global', num_workers: int = 1,
                          path: Optional[str] = None, format: str = 'csv',
                          meta_file: Optional[pd.DataFrame] = None, test_type: str = 'nonparametric', nan_value: Optional[int] = None,
                          name1: str = 'context1', name2: str = 'context2') -> Tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
@@ -30,7 +29,6 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     :param context2: Observed data of Context 2, potentially filtered.
     :param edge_metric: Edge metric used to construct the differential network.
     :param node_metric: Node metric used to construct the differential network.
-    :param lp_cap: Cap for -log10(p) used by the capped product metrics ('<...>-LPxRE-cap', '<...>-LPxVE-cap'), which are only available when it is set. Other metrics are not affected. Defaults to None.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param correction_scope: Scope of the multiple-testing correction for STC: 'global' (all nodes in one family) or 'local' (nodes corrected separately per test type used to compare them across contexts). Defaults to 'global'.
     :param num_workers: Number of workers for parallel computation of STC. Defaults to 1.
@@ -48,8 +46,6 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
         check_edge_metric(edge_metric)
     if node_metric is not None:
         check_node_metric(node_metric)
-    lp_cap = check_lp_cap(lp_cap)
-    check_cap_consistency(edge_metric, node_metric, lp_cap)
     edges_diff = None
     nodes_diff = None
     edge_node_stats = None
@@ -63,7 +59,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
 
     # Edges
     if edge_metric is not None:
-        edges_diff, edge_node_stats = compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, lp_cap=lp_cap, name1=name1, name2=name2)
+        edges_diff, edge_node_stats = compute_diff_edges(scores1=scores1, scores2=scores2, edge_metric=edge_metric, name1=name1, name2=name2)
         # scores1/scores2 are already reconciled above, so compute_diff_edges' own (redundant)
         # reconciliation pass finds nothing left to remove -- overwrite with the list found here,
         # which reflects what was actually removed for this differential network.
@@ -72,7 +68,7 @@ def compute_diff_network(scores1: pd.DataFrame, scores2: pd.DataFrame, context1:
     # Nodes
     if node_metric is not None:
         nodes_diff = compute_diff_nodes(context1=context1, context2=context2, scores1=scores1, scores2=scores2,
-                                         node_metric=node_metric, lp_cap=lp_cap, correction=correction, correction_scope=correction_scope, meta_file=meta_file, test_type=test_type, nan_value=nan_value, num_workers=num_workers)
+                                         node_metric=node_metric, correction=correction, correction_scope=correction_scope, meta_file=meta_file, test_type=test_type, nan_value=nan_value, num_workers=num_workers)
         nodes_diff.attrs['removed_variables'] = removed_variables
 
     if path is not None:
@@ -112,11 +108,11 @@ def _weighted_degree(scores, col, nodes):
 
 
 # Calculate differential weighted degree centralities (WDC-<score>)
-def degree_centrality(nodes_diff, scores1, scores2, metric='WDC-P', lp_cap: Optional[float] = None):
+def degree_centrality(nodes_diff, scores1, scores2, metric='WDC-P'):
     if not metric.startswith('WDC-'):
         raise ValueError(f"Invalid metric '{metric}' for weighted degree centrality.")
     score = metric_score(metric)
-    scores1, scores2 = add_score_columns(scores1, scores2, lp_cap=lp_cap)
+    scores1, scores2 = add_score_columns(scores1, scores2)
 
     nodes_diff = nodes_diff.copy()
     degree1 = _weighted_degree(scores1, score, nodes_diff.index)
@@ -133,11 +129,11 @@ def degree_centrality(nodes_diff, scores1, scores2, metric='WDC-P', lp_cap: Opti
 
 
 # Compute differential PageRank centrality (PRC-<score>)
-def pagerank_centrality(nodes_diff, scores1, scores2, metric='PRC-P', lp_cap: Optional[float] = None):
+def pagerank_centrality(nodes_diff, scores1, scores2, metric='PRC-P'):
     if not metric.startswith('PRC-'):
         raise ValueError(f"Invalid metric '{metric}' for PageRank centrality.")
     score = metric_score(metric)
-    scores1, scores2 = add_score_columns(scores1, scores2, lp_cap=lp_cap)
+    scores1, scores2 = add_score_columns(scores1, scores2)
 
     # Edge weight = |score| (PageRank requires non-negative weights; higher = stronger)
     scores1['weight'] = scores1[score].abs()
@@ -163,9 +159,8 @@ def pagerank_centrality(nodes_diff, scores1, scores2, metric='PRC-P', lp_cap: Op
 # Statistical test centrality (STC-<score>): test for each node whether its distribution differs between
 # the two contexts and derive all node scores from the test's adjusted p-value and effect size.
 def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric', correction='bh', nan_value: Optional[int] = None,
-                         num_workers: int = 1, correction_scope: str = 'global', lp_cap: Optional[float] = None):
+                         num_workers: int = 1, correction_scope: str = 'global'):
     check_correction_scope(correction_scope)
-    lp_cap = check_lp_cap(lp_cap)
     if not context1.columns.equals(context2.columns):
         raise ValueError('Context a and b need to have the same structure.')
     
@@ -316,29 +311,23 @@ def stat_test_centrality(context1, context2, meta_file, test_type='nonparametric
     nodes_diff['STC-VE'] = ve
     nodes_diff['STC-LPxRE'] = lp * re
     nodes_diff['STC-LPxVE'] = lp * ve
-    if lp_cap is not None:
-        lp_capped = np.minimum(lp, lp_cap)
-        nodes_diff['STC-LPxRE-cap'] = lp_capped * re
-        nodes_diff['STC-LPxVE-cap'] = lp_capped * ve
 
     return nodes_diff
 
 
 # Differential edge computation
-def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric: str, lp_cap: Optional[float] = None,
+def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric: str,
                        path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2') -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Compute differential edge scores based on the specified edge metric.
 
     Every edge metric is built from per-context scores (see statistics_utils.add_score_columns):
-    'diff-<score>' is the absolute between-context difference of one score (P, LP, RE, VE, LPxRE,
-    LPxVE, LPxRE-cap or LPxVE-cap), and 'sum-LP-VE' / 'sum-LP-RE' add up the absolute differences of
-    LP and VE / RE.
+    'diff-<score>' is the absolute between-context difference of one score (P, LP, RE, VE, LPxRE
+    or LPxVE), and 'sum-LP-VE' / 'sum-LP-RE' add up the absolute differences of LP and VE / RE.
 
     :param scores1: Statistical association scores of Context 1, rescaled and potentially filtered.
     :param scores2: Statistical association scores of Context 2, rescaled and potentially filtered.
     :param edge_metric: Edge metric to compute the differential edge scores.
-    :param lp_cap: Cap for -log10(p) used by the capped product metrics 'diff-LPxRE-cap' and 'diff-LPxVE-cap', which require it. Defaults to None.
     :param path: Optional path to save the differential edge scores as a CSV file. Defaults to None.
     :param name1: Name of Context 1, used to label the per-context ``raw-P``/``raw-E`` columns. Defaults to 'context1'.
     :param name2: Name of Context 2, used to label the per-context ``raw-P``/``raw-E`` columns. Defaults to 'context2'.
@@ -346,8 +335,6 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
              node-indexed DataFrame of per-node statistics over incident edges (see edge_node_statistics).
     """
     check_edge_metric(edge_metric)
-    lp_cap = check_lp_cap(lp_cap)
-    check_cap_consistency(edge_metric, None, lp_cap)
 
     # Remove variables flagged (single observed category, or entirely missing) in only one of
     # the two contexts, so scores1/scores2 are row-aligned for the subtraction below. This also
@@ -363,7 +350,7 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
     raw_cols2 = scores2[['label1', 'label2', 'raw-P', 'raw-E']].rename(
         columns={'raw-P': f'raw-P_{name2}', 'raw-E': f'raw-E_{name2}'})
 
-    scores1, scores2 = add_score_columns(scores1, scores2, lp_cap=lp_cap)
+    scores1, scores2 = add_score_columns(scores1, scores2)
 
     # Sum the absolute differences of the metric's score components
     edges_diff = None
@@ -446,13 +433,13 @@ def edge_node_statistics(edges_diff: pd.DataFrame, edge_metric: str) -> pd.DataF
 def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame, context2: pd.DataFrame,
                         node_metric: str, correction: str = 'bh', meta_file: Optional[pd.DataFrame] = None, test_type: str = 'nonparametric', 
                         nan_value: Optional[int] = None, num_workers: int = 1,
-                        path: Optional[str] = None, correction_scope: str = 'global', lp_cap: Optional[float] = None) -> pd.DataFrame:
+                        path: Optional[str] = None, correction_scope: str = 'global') -> pd.DataFrame:
     """
     Compute differential node scores based on the specified node metric.
 
     Node metrics are '<family>-<score>' with family WDC (weighted degree centrality), PRC (PageRank
-    centrality) or STC (statistical test centrality) and score P, LP, RE, VE, LPxRE, LPxVE,
-    LPxRE-cap or LPxVE-cap (see statistics_utils.add_score_columns). WDC and PRC use the score as
+    centrality) or STC (statistical test centrality) and score P, LP, RE, VE, LPxRE or LPxVE
+    (see statistics_utils.add_score_columns). WDC and PRC use the score as
     edge weight in each context and take the absolute difference of the max-normalised
     centralities; STC tests each node between the contexts and derives the score from the test's
     adjusted p-value and effect size.
@@ -469,12 +456,9 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     :param num_workers: Number of workers for parallel computation of STC. Only needed for the STC node metrics. Defaults to 1.
     :param path: Optional path to save the differential node scores as a CSV file. Defaults to None.
     :param correction_scope: Scope of the multiple-testing correction for STC: 'global' (all nodes in one family) or 'local' (nodes corrected separately per test type used to compare them across contexts). Defaults to 'global'.
-    :param lp_cap: Cap for -log10(p) used by the capped product metrics ('<family>-LPxRE-cap', '<family>-LPxVE-cap'), which require it. Defaults to None.
     :return: A DataFrame containing the computed differential node scores.
     """
     check_node_metric(node_metric)
-    lp_cap = check_lp_cap(lp_cap)
-    check_cap_consistency(None, node_metric, lp_cap)
     assert context1.columns.equals(context2.columns), 'Context a and b need to have the same structure.'
 
     # Remove variables flagged (single observed category, or entirely missing) in only one of
@@ -499,15 +483,15 @@ def compute_diff_nodes(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: p
     if family == 'STC':
         if meta_file is None:
             raise ValueError(f"To compute the '{node_metric}' node metric, please provide a 'meta_file' containing the node types.")
-        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, correction_scope=correction_scope, meta_file=meta_file, test_type=test_type, nan_value=nan_value, num_workers=num_workers, lp_cap=lp_cap)
+        nodes_diff = stat_test_centrality(context1=context1, context2=context2, correction=correction, correction_scope=correction_scope, meta_file=meta_file, test_type=test_type, nan_value=nan_value, num_workers=num_workers)
 
     # Weighted degree centrality (WDC-<score>)
     elif family == 'WDC':
-        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric=node_metric, lp_cap=lp_cap)
+        nodes_diff = degree_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric=node_metric)
 
     # PageRank centrality (PRC-<score>)
     else:
-        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric=node_metric, lp_cap=lp_cap)
+        nodes_diff = pagerank_centrality(nodes_diff=nodes_diff, scores1=scores1, scores2=scores2, metric=node_metric)
 
     # Extract only the relevant columns (eliminate intermediary columns used for computation)
     nodes_diff = nodes_diff[[node_metric]]

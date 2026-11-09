@@ -198,15 +198,14 @@ Parameters:
 
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
 - ``meta_file``: pandas DataFrame specifying the variable metadata. Must contain the columns ``label`` and ``type`` describing each variable and its data type.
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'`` and ``'sum-LP-RE'``, plus the capped variants ``'diff-LPxRE-cap'`` and ``'diff-LPxVE-cap'`` when ``lp_cap`` is set (see :ref:`diffnet`).
-- ``node_metric``: Node-level metric used to compute the differential network. Options are ``'<family>-<score>'`` with family ``WDC``, ``PRC`` or ``STC`` and score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE`` or ``LPxVE`` (e.g. ``'STC-P'``, ``'PRC-LPxRE'``), plus the capped variants ``'<family>-LPxRE-cap'`` and ``'<family>-LPxVE-cap'`` when ``lp_cap`` is set (see :ref:`diffnet`).
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'`` and ``'sum-LP-RE'`` (see :ref:`diffnet`).
+- ``node_metric``: Node-level metric used to compute the differential network. Options are ``'<family>-<score>'`` with family ``WDC``, ``PRC`` or ``STC`` and score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE`` or ``LPxVE`` (e.g. ``'STC-P'``, ``'PRC-LPxRE'``) (see :ref:`diffnet`).
 - ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'MeanEdgeRank'``, ``'MedianEdgeRank'``, ``'nodeRank'``, ``'MeanProductRank'`` and ``'MedianProductRank'``. Defaults to ``'PageRank+'``.
 - ``filter_method``: Filtering method. Options include ``'degree'``, ``'density'``. Required when ``filter_target`` is not ``None``.
 - ``filter_param``: Parameter controlling the filtering strength.
 - ``filter_target``: Which network to filter. ``None`` (default) performs no filtering. ``'context-specific'`` filters the two context networks *before* constructing the differential network (using ``filter_metric`` and ``filter_rule``); ``'differential'`` filters the differential network *after* its construction, directly on the computed ``edge_metric`` (in this case ``filter_metric`` and ``filter_rule`` are ignored). When ``filter_target`` is not ``None``, ``filter_method`` must be provided.
 - ``filter_metric``: Edge metric used for filtering. Options include ``'raw-P'`` and ``'rescaled-E'``. Only used when ``filter_target='context-specific'``.
 - ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'``. Only used when ``filter_target='context-specific'``.
-- ``lp_cap``: Cap for :math:`-\log_{10}(p)` in the capped product metrics (``'-LPxRE-cap'``, ``'-LPxVE-cap'``), which are only available when it is set. Above the cap only the effect size carries the signal. All other metrics are unaffected. Defaults to ``None``.
 - ``test_type``: Statistical test used for association score calculation. Options include ``'parametric'`` and ``'nonparametric'``. Defaults to ``'nonparametric'``.
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
 - ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.
@@ -517,9 +516,11 @@ multiple testing-adjusted p-value and :math:`E` the effect size:
 - ``LPxRE`` :math:`= LP \cdot RE` and ``LPxVE`` :math:`= LP \cdot VE`: combine the evidence for an
   association with its strength and direction, so that only significant *and* substantial
   associations obtain a high score.
-- ``LPxRE-cap`` and ``LPxVE-cap`` (only when ``lp_cap`` is set): as ``LPxRE`` and ``LPxVE``, but with
-  :math:`\min(LP, \text{lp\_cap})`. Above the cap, the significance is considered saturated (mostly driven
-  by sample size) and only the effect size carries the signal.
+
+.. note::
+   ``LP`` (and therefore ``LPxRE`` and ``LPxVE``) depends on the sample size as well as on the effect
+   size. Differential metrics built on it assume comparable effective (complete-case) sample sizes in
+   both contexts. With strongly imbalanced contexts, prefer the effect-size based scores ``RE`` and ``VE``.
 
 Edge metrics:
 
@@ -544,9 +545,8 @@ Parameters:
 
 - ``scores1``, ``scores2``: pandas DataFrames containing the statistical association scores of the two context-specific networks.
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'`` and ``'sum-LP-RE'``, plus the capped variants ``'diff-LPxRE-cap'`` and ``'diff-LPxVE-cap'`` when ``lp_cap`` is set (see :ref:`diffnet`).
-- ``node_metric``: Node-level metric used to compute the differential network. Options are ``'<family>-<score>'`` with family ``WDC``, ``PRC`` or ``STC`` and score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE`` or ``LPxVE`` (e.g. ``'STC-P'``, ``'PRC-LPxRE'``), plus the capped variants ``'<family>-LPxRE-cap'`` and ``'<family>-LPxVE-cap'`` when ``lp_cap`` is set (see :ref:`diffnet`).
-- ``lp_cap``: Cap for :math:`-\log_{10}(p)` in the capped product metrics (``'-LPxRE-cap'``, ``'-LPxVE-cap'``), which are only available when it is set. Above the cap only the effect size carries the signal. All other metrics are unaffected. Defaults to ``None``.
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'`` and ``'sum-LP-RE'`` (see :ref:`diffnet`).
+- ``node_metric``: Node-level metric used to compute the differential network. Options are ``'<family>-<score>'`` with family ``WDC``, ``PRC`` or ``STC`` and score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE`` or ``LPxVE`` (e.g. ``'STC-P'``, ``'PRC-LPxRE'``) (see :ref:`diffnet`).
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
 - ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.
 - ``path``: Optional directory where the computed differential scores will be saved.
@@ -622,8 +622,8 @@ node for every algorithm. The two component ranks are returned as ``rank_node`` 
 Algorithms that combine node and edge metrics (``PageRank+``, ``MeanProductRank`` and
 ``MedianProductRank``) require both
 metrics to use the same effect-size rescaling: metrics based on ``RE`` (``*-RE``, ``*-LPxRE``,
-``*-LPxRE-cap``, ``sum-LP-RE``) cannot be combined with metrics based on ``VE`` (``*-VE``,
-``*-LPxVE``, ``*-LPxVE-cap``, ``sum-LP-VE``). P- and LP-based metrics can be combined with either.
+``sum-LP-RE``) cannot be combined with metrics based on ``VE`` (``*-VE``,
+``*-LPxVE``, ``sum-LP-VE``). P- and LP-based metrics can be combined with either.
 
 Parameters:
 

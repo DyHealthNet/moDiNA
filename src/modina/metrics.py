@@ -1,4 +1,3 @@
-import math
 from typing import Optional
 
 
@@ -11,16 +10,9 @@ from typing import Optional
 #   LPxRE = LP * RE,  LPxVE = LP * VE
 SCORE_TYPES = ('P', 'LP', 'RE', 'VE', 'LPxRE', 'LPxVE')
 
-# Products of LP and an effect size. Only these have a capped variant ('<score>-cap'), where LP is
-# replaced by min(LP, lp_cap): above the cap the significance is considered saturated (mostly
-# driven by sample size) and only the effect size carries the signal.
-PRODUCT_SCORE_TYPES = ('LPxRE', 'LPxVE')
-CAP_SUFFIX = '-cap'
-CAPPED_SCORE_TYPES = tuple(s + CAP_SUFFIX for s in PRODUCT_SCORE_TYPES)
-
 # Edge metrics, mapped to the score types whose absolute between-context differences are summed.
 EDGE_METRICS = {
-    **{f'diff-{s}': (s,) for s in SCORE_TYPES + CAPPED_SCORE_TYPES},
+    **{f'diff-{s}': (s,) for s in SCORE_TYPES},
     'sum-LP-VE': ('LP', 'VE'),
     'sum-LP-RE': ('LP', 'RE'),
 }
@@ -28,9 +20,7 @@ EDGE_METRICS = {
 # Node metrics: weighted degree centrality (WDC), PageRank centrality (PRC) and statistical test
 # centrality (STC), each with every score type.
 NODE_FAMILIES = ('WDC', 'PRC', 'STC')
-NODE_METRICS = tuple(f'{f}-{s}' for f in NODE_FAMILIES for s in SCORE_TYPES + CAPPED_SCORE_TYPES)
-
-CAPPED_METRICS = frozenset(m for m in (*EDGE_METRICS, *NODE_METRICS) if m.endswith(CAP_SUFFIX))
+NODE_METRICS = tuple(f'{f}-{s}' for f in NODE_FAMILIES for s in SCORE_TYPES)
 
 RANKING_ALGORITHMS = ('PageRank+', 'PageRank', 'MeanEdgeRank', 'MedianEdgeRank', 'nodeRank', 'MeanProductRank',
                       'MedianProductRank')
@@ -59,15 +49,8 @@ ASCENDING_ALGORITHMS = frozenset({'MeanProductRank', 'MedianProductRank'})
 
 
 def metric_score(metric: str) -> str:
-    """Score type a node metric is built from, e.g. 'PRC-LPxRE-cap' -> 'LPxRE-cap'."""
+    """Score type a node metric is built from, e.g. 'PRC-LPxRE' -> 'LPxRE'."""
     return metric.split('-', 1)[1]
-
-
-def capped_variant(metric: str) -> Optional[str]:
-    """The '-cap' variant of a product metric (e.g. 'diff-LPxRE' -> 'diff-LPxRE-cap'), else None."""
-    if metric is not None and metric.endswith(PRODUCT_SCORE_TYPES):
-        return metric + CAP_SUFFIX
-    return None
 
 
 def check_edge_metric(edge_metric: str) -> str:
@@ -86,14 +69,6 @@ def check_ranking_alg(ranking_alg: str) -> str:
     if ranking_alg not in RANKING_ALGORITHMS:
         raise ValueError(f"Invalid ranking algorithm '{ranking_alg}'. Choose from: {', '.join(RANKING_ALGORITHMS)}.")
     return ranking_alg
-
-
-def check_lp_cap(lp_cap: Optional[float]) -> Optional[float]:
-    if lp_cap is None:
-        return None
-    if isinstance(lp_cap, bool) or not isinstance(lp_cap, (int, float)) or not math.isfinite(lp_cap) or lp_cap <= 0:
-        raise ValueError(f"Invalid lp_cap '{lp_cap}'. Provide a positive, finite number or None (no cap).")
-    return float(lp_cap)
 
 
 def effect_rescaling(metric: Optional[str]) -> Optional[str]:
@@ -115,10 +90,3 @@ def check_rescaling_consistency(node_metric: Optional[str], edge_metric: Optiona
     if node_rescaling is not None and edge_rescaling is not None and node_rescaling != edge_rescaling:
         raise ValueError(f"The node metric '{node_metric}' ({node_rescaling}) and the edge metric '{edge_metric}' ({edge_rescaling}) "
                          f"use different effect-size rescalings and cannot be combined. Use the same rescaling (RE or VE) for both.")
-
-
-def check_cap_consistency(edge_metric: Optional[str], node_metric: Optional[str], lp_cap: Optional[float]) -> None:
-    """Capped ('-cap') metrics are only defined when lp_cap is set."""
-    for metric in (edge_metric, node_metric):
-        if metric in CAPPED_METRICS and lp_cap is None:
-            raise ValueError(f"The metric '{metric}' requires 'lp_cap' to be set.")

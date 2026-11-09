@@ -2,7 +2,7 @@ from modina.context_net_inference import compute_context_scores
 from modina.diff_net_construction import compute_diff_network
 from modina.edge_filtering import filter, filter_differential
 from modina.ranking import compute_ranking
-from modina.metrics import check_edge_metric, check_node_metric, check_ranking_alg, check_lp_cap, check_cap_consistency, check_rescaling_consistency
+from modina.metrics import check_edge_metric, check_node_metric, check_ranking_alg, check_rescaling_consistency
 
 import json
 import logging
@@ -13,7 +13,7 @@ import pandas as pd
 
 # Wrapper function to perform the whole moDiNA pipeline
 def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: Optional[str] = None, node_metric: Optional[str] = None, ranking_alg: str = 'PageRank+',
-                     filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None, filter_target: Optional[str] = None, lp_cap: Optional[float] = None,
+                     filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None, filter_target: Optional[str] = None,
                      test_type: str = 'nonparametric', nan_value: Optional[int] = None,
                      correction: str = 'bh', correction_scope: str = 'global', num_workers: int=1, n_min_valid: int = 10,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2'):
@@ -34,9 +34,8 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param filter_metric: Edge metric used for filtering. Only used when filter_target is 'context-specific'. Defaults to None.
     :param filter_rule: Rule to integrate the networks during filtering. Only used when filter_target is 'context-specific'. Defaults to None.
     :param filter_target: Which network to filter. None (default) performs no filtering. 'context-specific' filters the two context networks before building the differential network (using filter_metric and filter_rule); 'differential' filters the differential network on the computed edge_metric (filter_metric and filter_rule are ignored). When filter_target is not None, filter_method must be provided.
-    :param edge_metric: Edge metric used to construct the differential network: 'diff-<score>' with score P, LP, RE, VE, LPxRE, LPxVE, LPxRE-cap or LPxVE-cap, or 'sum-LP-VE' / 'sum-LP-RE'.
+    :param edge_metric: Edge metric used to construct the differential network: 'diff-<score>' with score P, LP, RE, VE, LPxRE or LPxVE, or 'sum-LP-VE' / 'sum-LP-RE'.
     :param node_metric: Node metric used to construct the differential network: '<family>-<score>' with family WDC, PRC or STC and the same scores as for edge metrics.
-    :param lp_cap: Cap for -log10(p) in the capped product metrics ('-LPxRE-cap', '-LPxVE-cap'), which require it; above the cap only the effect size carries the signal. Other metrics are not affected. Defaults to None.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'MeanEdgeRank', 'MedianEdgeRank', 'nodeRank', 'MeanProductRank' and 'MedianProductRank'. Defaults to 'PageRank+'.
     :param name1: Name of Context 1. Used for saving files. Defaults to 'context1'.
     :param name2: Name of Context 2. Used for saving files. Defaults to 'context2'.
@@ -50,8 +49,6 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     if node_metric is not None:
         check_node_metric(node_metric)
     check_ranking_alg(ranking_alg)
-    lp_cap = check_lp_cap(lp_cap)
-    check_cap_consistency(edge_metric, node_metric, lp_cap)
     check_rescaling_consistency(node_metric, edge_metric, ranking_alg)
 
     if project_path is not None:
@@ -97,7 +94,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     edges_diff, nodes_diff, edge_node_stats = compute_diff_network(scores1=scores1_filtered, scores2=scores2_filtered,
                                                   context1=context1_filtered, context2=context2_filtered,
                                                   edge_metric=edge_metric, node_metric=node_metric,
-                                                  lp_cap=lp_cap, num_workers=num_workers,
+                                                  num_workers=num_workers,
                                                   correction=correction, correction_scope=correction_scope,
                                                   path=project_path, format='csv',
                                                   meta_file=meta_file, test_type=test_type, nan_value=nan_value,
@@ -142,7 +139,6 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         'filter_target': filter_target,
         'edge_metric': edge_metric,
         'node_metric': node_metric,
-        'lp_cap': lp_cap,
         'ranking_alg': ranking_alg
     }
 

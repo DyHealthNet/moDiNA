@@ -245,11 +245,11 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
    * - ``diff_net_analysis.node_metric``
      - ``string``
      - ``'STC-P'``
-     - Node-level differential metric. Used when ``run_type = 'single'``. One of: ``WDC-<score>``, ``PRC-<score>`` or ``STC-<score>`` with score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE``, ``LPxVE`` (e.g. ``STC-P``), the capped variants ``<family>-LPxRE-cap`` / ``<family>-LPxVE-cap`` (require ``lp_cap``), or ``None``.
+     - Node-level differential metric. Used when ``run_type = 'single'``. One of: ``WDC-<score>``, ``PRC-<score>`` or ``STC-<score>`` with score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE``, ``LPxVE`` (e.g. ``STC-P``), or ``None``.
    * - ``diff_net_analysis.edge_metric``
      - ``string``
      - ``'diff-LPxRE'``
-     - Edge-level differential metric. Used when ``run_type = 'single'``. One of: ``diff-P``, ``diff-LP``, ``diff-RE``, ``diff-VE``, ``diff-LPxRE``, ``diff-LPxVE``, ``sum-LP-VE``, ``sum-LP-RE``, the capped variants ``diff-LPxRE-cap`` / ``diff-LPxVE-cap`` (require ``lp_cap``), or ``None``. See the score definitions in the Python package documentation.
+     - Edge-level differential metric. Used when ``run_type = 'single'``. One of: ``diff-P``, ``diff-LP``, ``diff-RE``, ``diff-VE``, ``diff-LPxRE``, ``diff-LPxVE``, ``sum-LP-VE``, ``sum-LP-RE``, or ``None``. See the score definitions in the Python package documentation.
    * - ``diff_net_analysis.ranking_algorithm``
      - ``string``
      - ``'PageRank+'``
@@ -274,10 +274,6 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
      - ``string``
      - ``'zero'``
      - Rule applied when filtering edges. One of: ``zero`` (set filtered edges to zero), ``union`` (keep edges present in at least one context). Required when ``filter_method`` is set and ``filter_target`` is ``context-specific``.
-   * - ``diff_net_analysis.lp_cap``
-     - ``float``
-     - ``null``
-     - Cap for -log10(p) in the LP × effect-size product metrics. When set, every configuration with a product metric (``*-LPxRE``, ``*-LPxVE``) is run twice: uncapped and with the capped variant (``*-LPxRE-cap``, ``*-LPxVE-cap``), in which -log10(p) is limited to ``lp_cap`` so that above the cap only the effect size carries the signal. Other metrics are unaffected. Leave empty for no cap.
    * - ``diff_net_analysis.test_type``
      - ``string``
      - ``'nonparametric'``
