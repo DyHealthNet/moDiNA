@@ -85,6 +85,25 @@ def _neglog10_p(p):
     return -np.log10(np.where(p == 0, epsilon, p))
 
 
+# Test types whose effect size has no direction: Cramér's V (chi2), partial η² (anova) and η² (kruskal). The
+# bias-corrected η² estimates can be slightly negative near 0; that sign is estimation noise, not a direction.
+UNSIGNED_TEST_TYPES = frozenset({'chi2', 'anova', 'kruskal'})
+
+
+# Signed z-score of the adjusted p-value 'raw-P', the per-context ingredient of diff-Z.
+# z = Phi^-1(1 - p/2), floored like LP (p = 0 -> min non-zero p / 10), with the sign of the effect size for
+# directional effect sizes (Pearson, Spearman, point-biserial and rank-biserial r) and a positive sign for the
+# unsigned ones (UNSIGNED_TEST_TYPES). Unlike LP, which grows with the square of the test statistic, z grows
+# linearly with it, so z / sqrt(n) is a standardised effect size (for a correlation approximately atanh(r)).
+def _signed_z(p, e, test_type):
+    p = np.asarray(p, dtype=float)
+    nonzero = p[p > 0]
+    epsilon = nonzero.min() / 10.0 if nonzero.size else 1e-10
+    z = stats.norm.isf(np.clip(np.where(p == 0, epsilon, p), 0.0, 1.0) / 2.0)
+    negative = (np.asarray(e, dtype=float) < 0) & ~np.isin(np.asarray(test_type), list(UNSIGNED_TEST_TYPES))
+    return np.where(negative, -z, z)
+
+
 # Test types whose raw effect size (see TEST_EFFECT_SIZES in context_net_inference.py) is
 # already a variance-explained (r²-equivalent) quantity: ANOVA's partial η² and Kruskal-Wallis's
 # η². These are used as-is by effect_size_to_r2 below, rather than being squared.

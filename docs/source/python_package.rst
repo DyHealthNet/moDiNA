@@ -198,7 +198,7 @@ Parameters:
 
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
 - ``meta_file``: pandas DataFrame specifying the variable metadata. Must contain the columns ``label`` and ``type`` describing each variable and its data type.
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'`` and ``'sum-LP-RE'`` (see :ref:`diffnet`).
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'``, ``'sum-LP-RE'`` and ``'diff-Z'`` (see :ref:`diffnet`).
 - ``node_metric``: Node-level metric used to compute the differential network. Options are ``'<family>-<score>'`` with family ``WDC``, ``PRC`` or ``STC`` and score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE`` or ``LPxVE`` (e.g. ``'STC-P'``, ``'PRC-LPxRE'``) (see :ref:`diffnet`).
 - ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'MeanEdgeRank'``, ``'MedianEdgeRank'``, ``'nodeRank'``, ``'MeanProductRank'`` and ``'MedianProductRank'``. Defaults to ``'PageRank+'``.
 - ``filter_method``: Filtering method. Options include ``'degree'``, ``'density'``. Required when ``filter_target`` is not ``None``.
@@ -520,13 +520,30 @@ multiple testing-adjusted p-value and :math:`E` the effect size:
 .. note::
    ``LP`` (and therefore ``LPxRE`` and ``LPxVE``) depends on the sample size as well as on the effect
    size. Differential metrics built on it assume comparable effective (complete-case) sample sizes in
-   both contexts. With strongly imbalanced contexts, prefer the effect-size based scores ``RE`` and ``VE``.
+   both contexts. Because :math:`-\log_{10}(p)` grows roughly with the square of the test statistic, a small
+   difference between two strong associations also gives a large ``diff-LP``. With imbalanced contexts or
+   strong, stable associations, prefer ``diff-Z`` (or the effect-size based scores ``RE`` and ``VE``).
 
 Edge metrics:
 
 - ``diff-<score>``: absolute difference of a score between the two contexts, for every score above.
 - ``sum-LP-VE`` and ``sum-LP-RE``: sum of ``diff-LP`` and ``diff-VE`` / ``diff-RE``, an additive
   alternative to the products.
+- ``diff-Z``: change of the standardised effect size between the contexts, in units of its standard error,
+
+  .. math::
+
+     \text{diff-Z} = \frac{\left| z_1 / \sqrt{n_1} - z_2 / \sqrt{n_2} \right|}{\sqrt{1/n_1 + 1/n_2}},
+     \qquad z_c = \Phi^{-1}(1 - p_c / 2) \cdot \operatorname{sign}(E_c),
+
+  with :math:`p_c` the adjusted p-value and :math:`n_c` the number of samples of the test in context
+  :math:`c` (unsigned effect sizes, Cramér's V and :math:`\eta^2`, keep a positive sign).
+  :math:`z_c / \sqrt{n_c}` is a standardised effect size (for a correlation approximately
+  :math:`\operatorname{atanh}(r)`), so an association of equal strength gives ``diff-Z`` close to 0
+  whatever the sample sizes, and a difference between two strong associations is not inflated. Each test
+  keeps its own p-value, so the metric applies to every test type, and non-significant associations are
+  shrunk towards 0 as in ``diff-LP``. It needs the per-edge sample size column ``n``, which
+  ``compute_context_scores`` writes. It uses no effect-size rescaling and can be combined with every node metric.
 
 Node metrics (``<family>-<score>``, for every score above):
 
@@ -545,7 +562,7 @@ Parameters:
 
 - ``scores1``, ``scores2``: pandas DataFrames containing the statistical association scores of the two context-specific networks.
 - ``context1``, ``context2``: pandas DataFrames containing the observed data for the two contexts (rows: samples, columns: variables).
-- ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'`` and ``'sum-LP-RE'`` (see :ref:`diffnet`).
+- ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'``, ``'sum-LP-RE'`` and ``'diff-Z'`` (see :ref:`diffnet`).
 - ``node_metric``: Node-level metric used to compute the differential network. Options are ``'<family>-<score>'`` with family ``WDC``, ``PRC`` or ``STC`` and score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE`` or ``LPxVE`` (e.g. ``'STC-P'``, ``'PRC-LPxRE'``) (see :ref:`diffnet`).
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
 - ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.

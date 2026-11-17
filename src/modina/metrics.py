@@ -11,10 +11,14 @@ from typing import Optional
 SCORE_TYPES = ('P', 'LP', 'RE', 'VE', 'LPxRE', 'LPxVE')
 
 # Edge metrics, mapped to the score types whose absolute between-context differences are summed.
+# 'diff-Z' is not a plain difference of one score: it compares the standardised effect sizes z / sqrt(n) of both
+# contexts and divides by the standard error of their difference (see diff_net_construction._diff_z), so it needs
+# the per-edge sample size 'n'. It uses no effect-size rescaling and can be combined with every node metric.
 EDGE_METRICS = {
     **{f'diff-{s}': (s,) for s in SCORE_TYPES},
     'sum-LP-VE': ('LP', 'VE'),
     'sum-LP-RE': ('LP', 'RE'),
+    'diff-Z': ('Z',),
 }
 
 # Node metrics: weighted degree centrality (WDC), PageRank centrality (PRC) and statistical test

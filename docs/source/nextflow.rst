@@ -249,7 +249,7 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
    * - ``diff_net_analysis.edge_metric``
      - ``string``
      - ``'diff-LPxRE'``
-     - Edge-level differential metric. Used when ``run_type = 'single'``. One of: ``diff-P``, ``diff-LP``, ``diff-RE``, ``diff-VE``, ``diff-LPxRE``, ``diff-LPxVE``, ``sum-LP-VE``, ``sum-LP-RE``, or ``None``. See the score definitions in the Python package documentation.
+     - Edge-level differential metric. Used when ``run_type = 'single'``. One of: ``diff-P``, ``diff-LP``, ``diff-RE``, ``diff-VE``, ``diff-LPxRE``, ``diff-LPxVE``, ``sum-LP-VE``, ``sum-LP-RE``, ``diff-Z``, or ``None``. See the score definitions in the Python package documentation.
    * - ``diff_net_analysis.ranking_algorithm``
      - ``string``
      - ``'PageRank+'``

@@ -147,6 +147,53 @@ def _build_background(n_vars, strength, density, seed):
     return sigma_base, edges, float(np.linalg.eigvalsh(sigma_base).min())
 
 
+# Loading range of the module background: every variable loads on its module's factor with a
+# magnitude drawn uniformly from this range and a random sign. The range spans the weak (0.4) to high
+# (0.8) component saturation levels of Guadagnoli & Velicer (1988, Psychological Bulletin 103:265-275),
+# whose simulated population patterns have the same layout: one nonzero loading per variable and
+# equal-size components. The upper bound also protects the planting budget: lambda_min of the
+# background is at least 1 - 0.8**2 = 0.36. That is just below the largest planted magnitude of the
+# benchmark (corr_high 0.4), so the Weyl-based warning in simulate_copula fires, but planting has not
+# failed in 480 test draws (p = 150 to 1200, module_fraction 0.05 and 0.1, module_correlation 0.1 and
+# 0.2): the bound is a worst case. With module_fraction 0.1 and module_correlation 0.2 the background
+# matches the association structure of the HANCOCK cohort on the observed scale (~24% of pairs with
+# |r| > 0.1, ~8% > 0.2, ~4% > 0.3, ~15% of edges BH-significant at 381 samples per context; HANCOCK:
+# 25%, 6%, 2%, 12%), and the density does not change with the number of variables.
+_MODULE_LOADING = (0.4, 0.8)
+
+
+def _build_module_background(n_vars, module_size, module_correlation, seed):
+    """Build a dense background from correlated modules (a common factor model with correlated factors).
+
+    Returns (sigma_base, within-module pairs, lambda_min), like `_build_background`.
+
+    The variables are split at random into modules of (near-)equal size `module_size`, independent of
+    type and ground truth status. Each variable loads on its module's factor with loading l_i (magnitude
+    from `_MODULE_LOADING`, random sign), and the module factors correlate with each other at
+    `module_correlation`. Hence Sigma_ij = l_i * l_j within a module and l_i * l_j * module_correlation
+    between modules: strong associations within modules, weak but widespread ones between them, as in
+    real clinical data. Sigma = L F L^T + diag(1 - l**2) with F positive semidefinite for
+    0 <= module_correlation < 1 and |l_i| < 1, so it is positive definite by construction.
+
+    This is the module model of WGCNA's simulator (Langfelder & Horvath 2007, BMC Systems Biology 1:54):
+    l_i is the correlation of variable i with its module factor (eigengene), and correlated factors
+    give correlated modules.
+    """
+    if not 2 <= module_size <= n_vars:
+        raise ValueError(f'module_size must lie between 2 and the number of variables ({n_vars}), got {module_size}.')
+    if not 0.0 <= module_correlation < 1.0:
+        raise ValueError(f'module_correlation must lie in [0, 1), got {module_correlation}.')
+    rng = np.random.default_rng(seed)
+    n_modules = max(1, round(n_vars / module_size))
+    member = rng.permutation(np.arange(n_vars) % n_modules)
+    loading = rng.uniform(*_MODULE_LOADING, size=n_vars) * rng.choice([-1.0, 1.0], size=n_vars)
+    same = member[:, None] == member[None, :]
+    sigma_base = np.outer(loading, loading) * np.where(same, 1.0, module_correlation)
+    np.fill_diagonal(sigma_base, 1.0)
+    pairs = [(int(a), int(b)) for a, b in zip(*np.nonzero(np.triu(same, 1)))]
+    return sigma_base, pairs, float(np.linalg.eigvalsh(sigma_base).min())
+
+
 def _plan_hub_reuse(edge_types, hub_reuse_prob):
     """Decide up front which planted edges reuse an existing node as a hub, and of which type.
 
@@ -188,7 +235,9 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                     n_both_cont_cont=0, n_both_bi_bi=0, n_both_cat_cat=0, n_both_bi_cont=0, n_both_bi_cat=0, n_both_cont_cat=0,
                     *, corr_low, corr_high, shift_low, shift_high,
                     hub_reuse_prob=0.0,
-                    background_strength=0.2, background_density=2, background_seed=None):
+                    background_strength=0.2, background_density=2, background_seed=None,
+                    background_model='modules', module_size=None, module_fraction=0.1,
+                    module_correlation=0.2):
     """
     Simulate two contexts with binary and continuous nodes using a Gaussian copula.
     
@@ -244,23 +293,43 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                            the sum(magnitude**2) check exact. If no eligible hub exists yet, the
                            reuse is deferred to the next fresh pair of the same pair type. Default
                            0.0 gives one edge per node.
-    The background correlation structure is always a sparse scale-free network (preferential
-    attachment, producing a few high-degree hubs and a heavy-tailed degree distribution), turned
-    into a dense correlation matrix. It is built ONCE and shared by both contexts, so every pair
+    The background correlation structure is built ONCE and shared by both contexts, so every pair
     that is not planted has bit-identical correlation in the two contexts and the negatives stay
-    exactly null.
-    :param background_strength: Target mean |r| over the directly-wired pairs of the background.
+    exactly null. By default (background_model='modules') it consists of correlated modules (see
+    `module_fraction`). The alternative, background_model='scale_free', is a sparse scale-free network
+    (preferential attachment, producing a few high-degree hubs and a heavy-tailed degree distribution),
+    turned into a dense correlation matrix (see `background_strength` and `background_density`).
+    :param background_strength: Only used with background_model='scale_free'. Target mean |r| over
+                                the directly-wired pairs of the background.
                                 This is a property of the resulting correlation matrix, not a value
                                 written anywhere: the diagonal loading that attains it is solved for
                                 by bisection. It is bounded above by the topology (denser wiring
                                 forces weaker correlations); an unreachable request raises with the
                                 attainable ceiling.
-    :param background_density: Number of connections each node makes when it is added to the
+    :param background_density: Only used with background_model='scale_free'. Number of connections
+                               each node makes when it is added to the
                                network. Sets both the edge count and how large the hubs grow. Higher density lowers the reachable strength.
     :param background_seed: Seed for the background's own random generator. Kept separate from the
                             global streams the rest of the simulation draws from, so changing the
                             background does not change which pairs get planted or with what
                             magnitudes.
+    :param background_model: 'modules' (default) builds a dense background of correlated modules (see
+                             `_build_module_background`) from `module_fraction` (or `module_size`) and
+                             `module_correlation`, and ignores the two scale-free parameters.
+                             'scale_free' builds the scale-free background from `background_strength`
+                             and `background_density`. The module background reaches the association
+                             density of real clinical cohorts, which the scale-free one cannot: its
+                             diagonally dominant precision matrix caps the share of pairs with |r| > 0.15
+                             at about 1%.
+    :param module_size: Number of variables per module (modules have near-equal sizes). Default None:
+                        set from `module_fraction`. Only used with background_model='modules'.
+    :param module_fraction: Module size as a share of all variables, in (0, 1], used when `module_size`
+                            is None: module_size = max(2, round(module_fraction * n_vars)). Scaling the
+                            modules with the number of variables keeps the background density constant
+                            across variable counts. Default 0.1. Only used with background_model='modules'.
+    :param module_correlation: Correlation between the module factors, in [0, 1). Sets the weak
+                               associations between modules and with them how dense the background is.
+                               Default 0.2. Only used with background_model='modules'.
     :return: A tuple containing the two simulated contexts, a meta file, a list of ground truth nodes
              and a dict of per-edge/per-node injected effect sizes.
              - context1: pd.DataFrame of the first simulated context.
@@ -356,8 +425,18 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     # The background is built once and copied into both contexts, rather than drawn twice. That is
     # what keeps the negatives clean: an unplanted pair holds bit-identical values in corr1 and
     # corr2, so its true between-context difference is exactly zero rather than merely small.
-    sigma_base, background_pairs, background_lambda_min = _build_background(
-        n_vars, background_strength, background_density, background_seed)
+    if background_model == 'scale_free':
+        sigma_base, background_pairs, background_lambda_min = _build_background(
+            n_vars, background_strength, background_density, background_seed)
+    elif background_model == 'modules':
+        if module_size is None:
+            if not 0.0 < module_fraction <= 1.0:
+                raise ValueError(f'module_fraction must lie in (0, 1], got {module_fraction}.')
+            module_size = max(2, round(module_fraction * n_vars))
+        sigma_base, background_pairs, background_lambda_min = _build_module_background(
+            n_vars, module_size, module_correlation, background_seed)
+    else:
+        raise ValueError(f"background_model must be 'scale_free' or 'modules', got {background_model!r}.")
     corr1 = sigma_base.copy()
     corr2 = sigma_base.copy()
 

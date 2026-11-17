@@ -1,5 +1,6 @@
-from modina.statistics_utils import (_df_to_numpy, _separate_types, _neglog10_p, _probit_magnitude, add_score_columns,
-                                     fdr_correction, reconcile_flagged_variables, check_correction_scope)
+from modina.statistics_utils import (_df_to_numpy, _separate_types, _neglog10_p, _probit_magnitude, _signed_z,
+                                     add_score_columns, fdr_correction, reconcile_flagged_variables,
+                                     check_correction_scope)
 from modina.context_net_inference import _order_categories, TEST_EFFECT_SIZES
 from modina.metrics import (EDGE_METRICS, metric_score, check_edge_metric, check_node_metric)
 
@@ -324,6 +325,8 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
     Every edge metric is built from per-context scores (see statistics_utils.add_score_columns):
     'diff-<score>' is the absolute between-context difference of one score (P, LP, RE, VE, LPxRE
     or LPxVE), and 'sum-LP-VE' / 'sum-LP-RE' add up the absolute differences of LP and VE / RE.
+    'diff-Z' is the change of the standardised effect size z / sqrt(n) in units of its standard error
+    (see _diff_z); it needs the per-edge sample size column 'n' in both score tables.
 
     :param scores1: Statistical association scores of Context 1, rescaled and potentially filtered.
     :param scores2: Statistical association scores of Context 2, rescaled and potentially filtered.
@@ -355,7 +358,10 @@ def compute_diff_edges(scores1: pd.DataFrame, scores2: pd.DataFrame, edge_metric
     # Sum the absolute differences of the metric's score components
     edges_diff = None
     for score in EDGE_METRICS[edge_metric]:
-        part = _subtract_edges(scores1, scores2, values=score, metric=score)
+        if score == 'Z':
+            part = _diff_z(scores1, scores2, metric=score)
+        else:
+            part = _subtract_edges(scores1, scores2, values=score, metric=score)
         if edges_diff is None:
             edges_diff = part[['label1', 'label2', 'test_type']].copy()
             edges_diff[edge_metric] = 0.0
@@ -514,5 +520,30 @@ def _subtract_edges(scores1, scores2, values, metric):
     edges_diff = scores1[['label1', 'label2', 'test_type']].copy()
     edges_diff[metric] = abs(scores1[values] - scores2[values])
 
+    return edges_diff
+
+
+# diff-Z: change of the standardised effect size between the contexts, in units of its standard error.
+#   z_c = signed z-score of the adjusted p-value of context c (statistics_utils._signed_z)
+#   diff-Z = |z_1 / sqrt(n_1) - z_2 / sqrt(n_2)| / sqrt(1 / n_1 + 1 / n_2)
+# z_c / sqrt(n_c) is a standardised effect size (for a correlation approximately atanh(r)), so an association of
+# equal strength gives diff-Z ~ 0 whatever the sample sizes, and a small difference between two strong associations
+# stays small (unlike diff-LP, as -log10(p) grows with the square of the test statistic). Each test keeps its own
+# p-value, and the adjusted p-values shrink weak, non-significant associations towards 0, as in diff-LP.
+def _diff_z(scores1, scores2, metric):
+    if not scores1['label1'].equals(scores2['label1']) or not scores1['label2'].equals(scores2['label2']):
+        raise ValueError('Context a and b need to have the same structure.')
+    if 'n' not in scores1.columns or 'n' not in scores2.columns:
+        raise ValueError("The edge metric 'diff-Z' needs the per-edge sample size column 'n' in both score tables "
+                         "(as written by compute_context_scores).")
+    n1 = scores1['n'].to_numpy(dtype=float)
+    n2 = scores2['n'].to_numpy(dtype=float)
+    z1 = _signed_z(scores1['raw-P'], scores1['raw-E'], scores1['test_type'])
+    z2 = _signed_z(scores2['raw-P'], scores2['raw-E'], scores2['test_type'])
+    with np.errstate(divide='ignore', invalid='ignore'):
+        dz = np.abs(z1 / np.sqrt(n1) - z2 / np.sqrt(n2)) / np.sqrt(1.0 / n1 + 1.0 / n2)
+    edges_diff = scores1[['label1', 'label2', 'test_type']].copy()
+    # Edges without a valid sample size in a context carry no evidence of a change.
+    edges_diff[metric] = np.where(np.isfinite(dz), dz, 0.0)
     return edges_diff
 
