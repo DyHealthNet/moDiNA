@@ -11,7 +11,8 @@ from modina.metrics import (EDGE_METRICS, NODE_METRICS, ALG_REQUIRES, ALG_EDGE_S
 # Compute ranking
 def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: Optional[pd.DataFrame | pd.Series], ranking_alg: str,
                     path: Optional[str] = None, meta_file: Optional[pd.DataFrame] = None,
-                    edge_node_stats: Optional[pd.DataFrame] = None) -> pd.DataFrame | pd.Series:
+                    edge_node_stats: Optional[pd.DataFrame] = None,
+                    pagerank_damping: float = 0.85) -> pd.DataFrame | pd.Series:
     """
     Compute a ranking based on the specified ranking algorithm.
 
@@ -32,9 +33,14 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
     :param path: Optional path to save the ranking as a CSV file.
     :param edge_node_stats: Optional precomputed per-node edge statistics (see edge_node_statistics). If not
                             provided but an edge metric was employed, the statistics are computed on the fly.
+    :param pagerank_damping: Damping factor (alpha) of 'PageRank+' and 'PageRank': the probability of following an
+                             edge rather than teleporting (for 'PageRank+', to a node drawn proportional to its node
+                             metric). Must be in [0, 1); 0 reduces 'PageRank+' to the node-metric ranking. Ignored by
+                             the other algorithms. Defaults to 0.85.
     :return: A DataFrame containing the ranking, enriched with the node-metric value and per-node edge statistics.
     """
     check_ranking_alg(ranking_alg)
+    check_pagerank_damping(pagerank_damping)
 
     node_metric = _find_metric(nodes_diff, NODE_METRICS, fallback=0) if nodes_diff is not None else None
     edge_metric = _find_metric(edges_diff, EDGE_METRICS, fallback=3) if edges_diff is not None else None
@@ -57,12 +63,12 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
     if ranking_alg == 'PageRank+':
         ranking_scores = pagerank(nodes_diff=nodes_diff, edges_diff=edges_diff,
                                   node_metric=node_metric, edge_metric=edge_metric,
-                                  personalization=True)
+                                  personalization=True, damping=pagerank_damping)
 
     # PageRank
     elif ranking_alg == 'PageRank':
         ranking_scores = pagerank(edges_diff=edges_diff, edge_metric=edge_metric,
-                                personalization=False)
+                                personalization=False, damping=pagerank_damping)
 
     # Mean / median edge metric over each node's incident edges
     elif ranking_alg in ('MeanEdgeRank', 'MedianEdgeRank'):
@@ -118,8 +124,15 @@ def _find_metric(df, known, fallback):
     return col
 
 
-# PageRank algorithm
-def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, personalization=True):
+# Damping factor (alpha) of PageRank / PageRank+. alpha = 1 is excluded: without teleportation the power iteration
+# need not converge (and PageRank+ would ignore the node metric).
+def check_pagerank_damping(damping):
+    if isinstance(damping, bool) or not isinstance(damping, (int, float)) or not 0 <= damping < 1:
+        raise ValueError(f'pagerank_damping must be a number in [0, 1), got {damping!r}.')
+
+
+# PageRank algorithm; damping is networkx' alpha (probability of following an edge rather than teleporting)
+def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, personalization=True, damping=0.85):
     edges_diff = edges_diff.copy()
     edges_diff['weight'] = edges_diff[edge_metric]
 
@@ -136,13 +149,13 @@ def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, persona
 
         # Apply PageRank with personalization
         if (nodes_diff['weight'].nunique() == 1):
-            ranking = nx.pagerank(network)
+            ranking = nx.pagerank(network, alpha=damping)
         else:
             personalization = nodes_diff['weight'].to_dict()
-            ranking = nx.pagerank(network, personalization=personalization)
+            ranking = nx.pagerank(network, alpha=damping, personalization=personalization)
     else:
         # Apply PageRank without personalization
-        ranking = nx.pagerank(network)
+        ranking = nx.pagerank(network, alpha=damping)
 
     return ranking
 
