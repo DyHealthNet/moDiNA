@@ -33,6 +33,13 @@ _N_ORDINAL_CATEGORIES = 5
 # so it is warned about rather than passed over silently.
 _MAX_ABS_CORR = 0.99
 
+# Planted hubs: the smallest eigenvalue a context matrix must keep after a hub's edges are written,
+# and how often a hub's partners, magnitudes and signs are redrawn before giving up. A hub's edges can
+# break positive definiteness (roughly, its squared correlations with nearly independent partners must
+# sum to less than 1), so every hub is checked exactly and redrawn on failure.
+_HUB_MIN_EIGENVALUE = 1e-6
+_HUB_MAX_DRAWS = 200
+
 
 # Magnitude written into every off-diagonal cell of the background precision matrix Omega. Its
 # absolute value is arbitrary: `background_strength` is reached by solving for the diagonal
@@ -235,7 +242,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                     n_both_cont_cont=0, n_both_bi_bi=0, n_both_cat_cat=0, n_both_bi_cont=0, n_both_bi_cat=0, n_both_cont_cat=0,
                     *, corr_low, corr_high, shift_low, shift_high,
                     hub_reuse_prob=0.0,
-                    n_hub_cont=0, n_hub_bi=0, n_hub_cat=0, hub_loading_scale=0.5,
+                    n_hub_cont=0, n_hub_bi=0, n_hub_cat=0, hub_degree_low=3, hub_degree_high=8,
+                    n_module_hub_cont=0, n_module_hub_bi=0, n_module_hub_cat=0, module_hub_scale=0.5,
                     background_strength=0.2, background_density=2, background_seed=None,
                     background_model='modules', module_size=None, module_fraction=0.1,
                     module_correlation=0.2):
@@ -259,18 +267,37 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     :param n_corr_bi_cat: Number of binary-categorical node pairs with an artificially introduced correlation difference.
     :param n_corr_cont_cat: Number of continuous-categorical node pairs with an artificially introduced correlation difference.
     :param n_corr_bi_cont: Number of mixed node pairs with an artificially introduced correlation difference.
-    :param n_hub_cont: Number of continuous hub nodes whose associations are rewired (see `hub_loading_scale`).
-    :param n_hub_bi: Number of binary hub nodes whose associations are rewired.
-    :param n_hub_cat: Number of categorical hub nodes whose associations are rewired.
-    :param hub_loading_scale: Hub rewiring: in one randomly chosen context, every background correlation of a
-                              hub with the other variables is multiplied by this factor in [0, 1). Under the
-                              module background this is the hub's module loading shrinking by the factor (0:
-                              the hub leaves its module), so all its module correlations change at once.
-                              The matrix stays positive definite for any factor. Ground truth: the hub is a
-                              ground-truth node ('hub rewiring'); its edges whose latent correlation changes
-                              by at least `corr_low` are ground-truth edges. Its partners are not
-                              ground-truth nodes (each carries a single changed edge). Hubs are disjoint
-                              from all other planted nodes. Default 0.5.
+    :param n_hub_cont: Number of continuous planted hubs. A planted hub is a node with k differential
+                       edges to k partners drawn at random among the free nodes of any type, k drawn
+                       uniformly from [`hub_degree_low`, `hub_degree_high`]. Each edge changes like a planted
+                       pair (magnitude from [`corr_low`, `corr_high`], random sign), and all edges of a hub
+                       change in the same, randomly chosen context. Every hub is checked for positive
+                       definiteness and its partners, magnitudes and signs are redrawn on failure (count in
+                       effects['hub_redraws']); high degrees with large magnitudes therefore favour weaker
+                       draws. Ground truth: the hub ('hub') and its partners ('hub partner', one edge each,
+                       like a pair end); the hub edges ('hub').
+    :param n_hub_bi: Number of binary planted hubs.
+    :param n_hub_cat: Number of categorical planted hubs.
+    :param hub_degree_low: Smallest number of edges of a planted hub (>= 1). Default 3.
+    :param hub_degree_high: Largest number of edges of a planted hub. Default 8.
+    :param n_module_hub_cont: Number of continuous module hubs (see `module_hub_scale`).
+    :param n_module_hub_bi: Number of binary module hubs.
+    :param n_module_hub_cat: Number of categorical module hubs.
+    :param module_hub_scale: Module hubs: in one randomly chosen context, every background correlation of the
+                             hub with the other variables is multiplied by this factor in [0, 1). Under the
+                             module background this is the hub's module loading shrinking by the factor (0:
+                             the hub leaves its module), so all its module correlations change at once. The
+                             matrix stays positive definite for any factor. Ground truth: the hub ('module
+                             hub'); its edges whose latent correlation changes by at least `corr_low` are
+                             ground-truth edges ('module hub'). Its partners are not ground-truth nodes;
+                             evaluations should leave them out (neither positive nor negative), since each
+                             carries a real changed edge. Default 0.5.
+
+    Both hub types are planted after the pairs and the mean-shift node selection, from the next free nodes
+    of their type, and draw from their own random stream (seeded from the state of numpy's global
+    generator without advancing it). Adding hubs therefore leaves the pairs, the shift nodes and their
+    magnitudes unchanged, so runs with planted hubs and with module hubs are paired, and no-hub
+    configurations are unchanged.
     :param n_both_cont_cont: Number of continuous node pairs with both an aritificially introduced mean shift and correlation difference.
     :param n_both_bi_bi: Number of binary node pairs with both an artificially introduced mean shift and correlation difference.
     :param n_both_cat_cat: Number of categorical node pairs with both an artificially introduced mean shift and correlation difference.
@@ -359,9 +386,11 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                for nodes with no mean-shift draw of their own), 'corr_base' (the shared background
                correlation matrix), 'background_edges' (the directly-wired pairs, as node-name
                frozensets) and 'background_lambda_min' (the perturbation budget the planting step was
-               checked against). Hub rewiring adds 'hub_nodes' (list), 'hub_edge_magnitude' (dict keyed by
-               frozenset({hub, partner}) -> realised latent correlation difference, ground-truth hub edges
-               only) and 'hub_context' (dict hub -> context whose row was scaled); hubs also appear in
+               checked against). Planted hubs add 'hub_nodes' (list), 'hub_partners' (dict hub -> list of
+               partners), 'hub_edge_magnitude' (dict keyed by frozenset({hub, partner}) -> realised latent
+               correlation difference), 'hub_context' (dict hub -> context of its edges) and 'hub_redraws'
+               (failed draws in total); module hubs add 'module_hub_nodes', 'module_hub_edge_magnitude'
+               (ground-truth edges only) and 'module_hub_context'. Hubs and partners also appear in
                'node_degree' / 'node_sum_magnitude' with their ground-truth edges.
     """
     if n_bi <= 0 and n_cont <= 0 and n_cat <= 0:
@@ -371,10 +400,13 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     if not 0.0 <= corr_low <= corr_high <= 0.95:
         raise ValueError(f'corr_low and corr_high must satisfy 0 <= corr_low <= corr_high <= 0.95, '
                          f'got corr_low={corr_low}, corr_high={corr_high}.')
-    if not 0.0 <= hub_loading_scale < 1.0:
-        raise ValueError(f'hub_loading_scale must lie in [0, 1), got {hub_loading_scale}.')
-    if min(n_hub_cont, n_hub_bi, n_hub_cat) < 0:
-        raise ValueError('n_hub_cont, n_hub_bi and n_hub_cat must not be negative.')
+    if not 0.0 <= module_hub_scale < 1.0:
+        raise ValueError(f'module_hub_scale must lie in [0, 1), got {module_hub_scale}.')
+    if min(n_hub_cont, n_hub_bi, n_hub_cat, n_module_hub_cont, n_module_hub_bi, n_module_hub_cat) < 0:
+        raise ValueError('n_hub_* and n_module_hub_* must not be negative.')
+    if not 1 <= hub_degree_low <= hub_degree_high:
+        raise ValueError(f'hub_degree_low and hub_degree_high must satisfy 1 <= hub_degree_low <= hub_degree_high, '
+                         f'got {hub_degree_low} and {hub_degree_high}.')
     if not 0.0 <= shift_low <= shift_high:
         raise ValueError(f'shift_low and shift_high must satisfy 0 <= shift_low <= shift_high, '
                          f'got shift_low={shift_low}, shift_high={shift_high}.')
@@ -383,7 +415,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     # away, but it cannot rescue a sample size too small to estimate the association at all. Warn
     # when that regime is entered, since raising the bounds is then not the fix.
     n_min_samples = min(n_samples_1, n_samples_2)
-    n_bi_effects = (n_shift_bi + n_hub_bi + n_corr_bi_bi + n_both_bi_bi + n_corr_bi_cont + n_both_bi_cont
+    n_bi_effects = (n_shift_bi + n_hub_bi + n_module_hub_bi + n_corr_bi_bi + n_both_bi_bi + n_corr_bi_cont + n_both_bi_cont
                     + n_corr_bi_cat + n_both_bi_cat)
     if n_bi_effects > 0 and _BINARY_P_LOW * n_min_samples < _MIN_MINORITY_COUNT:
         logging.warning(
@@ -393,7 +425,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
             f'Binary ground truth effects will be noise-limited at this sample size. Increase '
             f'n_samples_1/n_samples_2.')
 
-    n_cat_effects = (n_shift_cat + n_hub_cat + n_corr_cat_cat + n_both_cat_cat + n_corr_bi_cat + n_both_bi_cat
+    n_cat_effects = (n_shift_cat + n_hub_cat + n_module_hub_cat + n_corr_cat_cat + n_both_cat_cat + n_corr_bi_cat + n_both_bi_cat
                      + n_corr_cont_cat + n_both_cont_cat)
     if n_cat_effects > 0 and n_min_samples / _N_ORDINAL_CATEGORIES < _MIN_MINORITY_COUNT:
         logging.warning(
@@ -402,12 +434,19 @@ def simulate_copula(path=None, name1='context1', name2='context2',
             f'even when perfectly balanced, below the ~{_MIN_MINORITY_COUNT} needed for a stable '
             f'association estimate. Ordinal ground truth effects will be noise-limited at this sample '
             f'size.')
-    if n_shift_cont + n_hub_cont + n_corr_cont_cont*2 + n_both_cont_cont*2 + n_corr_bi_cont + n_both_bi_cont + n_corr_cont_cat + n_both_cont_cat > n_cont:
+    if n_shift_cont + n_hub_cont + n_module_hub_cont + n_corr_cont_cont*2 + n_both_cont_cont*2 + n_corr_bi_cont + n_both_bi_cont + n_corr_cont_cat + n_both_cont_cat > n_cont:
         raise ValueError('The number of continuous abnormal nodes is larger than the total number of continuous nodes.')
-    if n_shift_bi + n_hub_bi + n_corr_bi_bi*2 + n_both_bi_bi*2 + n_corr_bi_cont + n_both_bi_cont + n_corr_bi_cat + n_both_bi_cat > n_bi:
+    if n_shift_bi + n_hub_bi + n_module_hub_bi + n_corr_bi_bi*2 + n_both_bi_bi*2 + n_corr_bi_cont + n_both_bi_cont + n_corr_bi_cat + n_both_bi_cat > n_bi:
         raise ValueError('The number of binary abnormal nodes is larger than the total number of binary nodes.')
-    if n_shift_cat + n_hub_cat + n_corr_cat_cat*2 + n_both_cat_cat*2 + n_corr_bi_cat + n_both_bi_cat + n_corr_cont_cat + n_both_cont_cat > n_cat:
+    if n_shift_cat + n_hub_cat + n_module_hub_cat + n_corr_cat_cat*2 + n_both_cat_cat*2 + n_corr_bi_cat + n_both_bi_cat + n_corr_cont_cat + n_both_cont_cat > n_cat:
         raise ValueError('The number of categorical abnormal nodes is larger than the total number of categorical nodes.')
+    n_planted_nodes = (n_shift_cont + n_shift_bi + n_shift_cat
+                       + 2 * (n_corr_cont_cont + n_corr_bi_bi + n_corr_cat_cat + n_corr_bi_cont + n_corr_bi_cat + n_corr_cont_cat
+                              + n_both_cont_cont + n_both_bi_bi + n_both_cat_cat + n_both_bi_cont + n_both_bi_cat + n_both_cont_cat)
+                       + n_module_hub_cont + n_module_hub_bi + n_module_hub_cat)
+    if n_planted_nodes + (n_hub_cont + n_hub_bi + n_hub_cat) * (1 + hub_degree_high) > n_bi + n_cont + n_cat:
+        raise ValueError('Not enough nodes for the planted hubs and their partners (each hub may need '
+                         'hub_degree_high partners) next to the other ground-truth nodes.')
 
     # Prepare dataframes
     cont_cols = [f"cont{i+1}" for i in range(n_cont)]
@@ -526,46 +565,6 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         edge_magnitude[frozenset(node_pair)] = magnitude
         ground_truth.append(node_pair)
 
-    # Hub rewiring. Each hub is the next free node of its type (after the pair plants, before the mean
-    # shifts, so hubs are disjoint from every other planted node). In one random context its whole row
-    # of the correlation matrix is scaled by hub_loading_scale (s). Under the module background,
-    # Sigma_hj = l_h * l_j * F, so this is exactly the hub's loading shrinking from l_h to s * l_h (with
-    # its unique variance raised to 1 - (s * l_h)**2): one cause that changes all its associations.
-    # Validity holds for any positive definite matrix: the new matrix is D Sigma D + (1 - s**2) e_h e_h^T
-    # with D = diag(1, .., s, .., 1), a congruence plus a non-negative diagonal term, and its smallest
-    # eigenvalue is not below that of Sigma, so the pair-planting budget above stays valid. Hub rows
-    # never contain a planted pair cell, since hubs are disjoint from the pair nodes. With no hubs
-    # nothing is drawn, so the output of every existing configuration is unchanged.
-    hub_nodes = []
-    hub_edge_magnitude = {}
-    hub_context = {}
-    for n_hub, pool in ((n_hub_cont, normal_nodes_cont), (n_hub_bi, normal_nodes_bi), (n_hub_cat, normal_nodes_cat)):
-        for _ in range(n_hub):
-            assert pool, 'Introducing correlations was unsuccessful.'
-            hub = pool.pop(0)
-            hub_nodes.append(hub)
-            context_idx = random.choice([1, 2])
-            hub_context[hub] = context_idx
-            target = corr1 if context_idx == 1 else corr2
-            h = nodes.index(hub)
-            row = target[h, :] * hub_loading_scale
-            target[h, :] = row
-            target[:, h] = row
-            target[h, h] = 1.0
-    # Ground-truth hub edges: every hub edge whose latent correlation differs by at least corr_low between
-    # the contexts, with its realised difference (read off the final matrices, so two hubs of one module
-    # that share an edge are handled exactly).
-    for hub in hub_nodes:
-        h = nodes.index(hub)
-        delta = np.abs(corr1[h, :] - corr2[h, :])
-        for j in np.flatnonzero(delta >= max(corr_low, 1e-12)):
-            if j != h:
-                hub_edge_magnitude[frozenset((hub, nodes[j]))] = float(delta[j])
-    for hub in hub_nodes:
-        incident = [m for edge, m in hub_edge_magnitude.items() if hub in edge]
-        node_degree[hub] = len(incident)
-        node_sum_magnitude[hub] = float(sum(incident))
-
     # Select nodes for mean shifts. Selection is deterministic (first available node in order),
     # so repeated simulations with the same settings always tweak exactly the same variables.
     # Nodes are drawn from the front of each type pool, after correlation pairs above consumed theirs.
@@ -583,6 +582,98 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         assert normal_nodes_cat, 'Introducing correlations was unsuccessful.'
         node = normal_nodes_cat.pop(0)
         shift_nodes.append(node)
+
+
+    # Hubs, planted after the pairs and the shift-node selection so that adding them changes nothing
+    # else. They draw from their own generator, seeded from the state of numpy's global generator without
+    # advancing it: the pairs, the shift nodes, the shift magnitudes and the sampling stream are the same
+    # with planted hubs, with module hubs and without hubs (paired runs). No generator is created when no
+    # hub is requested, so the output of every existing configuration is unchanged.
+    hub_nodes, hub_partners, hub_edge_magnitude, hub_context, hub_redraws = [], {}, {}, {}, 0
+    module_hub_nodes, module_hub_edge_magnitude, module_hub_context = [], {}, {}
+    n_hubs = n_hub_cont + n_hub_bi + n_hub_cat + n_module_hub_cont + n_module_hub_bi + n_module_hub_cat
+    hub_rng = np.random.default_rng(np.random.get_state()[1]) if n_hubs else None
+
+    # Planted hubs. The hub is the next free node of its type; its k partners are drawn at random among
+    # all free nodes. All k edges change in one context, each by a magnitude from [corr_low, corr_high]
+    # with a random sign, added to the background value like a planted pair. If the context matrix is no
+    # longer positive definite, the partners, magnitudes and signs are redrawn (k and the context are kept).
+    for n_hub, pool in ((n_hub_cont, normal_nodes_cont), (n_hub_bi, normal_nodes_bi), (n_hub_cat, normal_nodes_cat)):
+        for _ in range(n_hub):
+            assert pool, 'Introducing correlations was unsuccessful.'
+            hub = pool.pop(0)
+            k = int(hub_rng.integers(hub_degree_low, hub_degree_high + 1))
+            context_idx = int(hub_rng.choice([1, 2]))
+            target = corr1 if context_idx == 1 else corr2
+            h = nodes.index(hub)
+            free = normal_nodes_cont + normal_nodes_bi + normal_nodes_cat
+            if len(free) < k:
+                raise ValueError(f'Not enough free nodes for the {k} partners of hub {hub}.')
+            for attempt in range(_HUB_MAX_DRAWS):
+                partners = [free[i] for i in sorted(hub_rng.choice(len(free), size=k, replace=False))]
+                idx = [nodes.index(p) for p in partners]
+                signed = hub_rng.uniform(corr_low, corr_high, size=k) * hub_rng.choice([-1.0, 1.0], size=k)
+                old = target[h, idx].copy()
+                new = np.clip(old + signed, -_MAX_ABS_CORR, _MAX_ABS_CORR)
+                target[h, idx] = new
+                target[idx, h] = new
+                if np.linalg.eigvalsh(target).min() > _HUB_MIN_EIGENVALUE:
+                    break
+                target[h, idx] = old
+                target[idx, h] = old
+            else:
+                raise ValueError(
+                    f'Hub {hub}: no positive definite draw of its {k} edges in {_HUB_MAX_DRAWS} attempts. Lower '
+                    f'hub_degree_high or corr_high.')
+            hub_redraws += attempt
+            for p in partners:
+                for type_pool in (normal_nodes_cont, normal_nodes_bi, normal_nodes_cat):
+                    if p in type_pool:
+                        type_pool.remove(p)
+            hub_nodes.append(hub)
+            hub_partners[hub] = partners
+            hub_context[hub] = context_idx
+            for p, delta in zip(partners, np.abs(new - old)):
+                hub_edge_magnitude[frozenset((hub, p))] = float(delta)
+                node_degree[p] = 1
+                node_sum_magnitude[p] = float(delta)
+            node_degree[hub] = k
+            node_sum_magnitude[hub] = float(np.abs(new - old).sum())
+
+    # Module hubs. Each is the next free node of its type. In one random context its whole row of the
+    # correlation matrix is scaled by module_hub_scale (s). Under the module background,
+    # Sigma_hj = l_h * l_j * F, so this is exactly the hub's loading shrinking from l_h to s * l_h (with
+    # its unique variance raised to 1 - (s * l_h)**2): one cause that changes all its associations.
+    # Validity holds for any positive definite matrix: the new matrix is D Sigma D + (1 - s**2) e_h e_h^T
+    # with D = diag(1, .., s, .., 1), a congruence plus a non-negative diagonal term, and its smallest
+    # eigenvalue is not below that of Sigma. Module hubs are disjoint from every other planted node.
+    for n_hub, pool in ((n_module_hub_cont, normal_nodes_cont), (n_module_hub_bi, normal_nodes_bi),
+                        (n_module_hub_cat, normal_nodes_cat)):
+        for _ in range(n_hub):
+            assert pool, 'Introducing correlations was unsuccessful.'
+            hub = pool.pop(0)
+            module_hub_nodes.append(hub)
+            context_idx = int(hub_rng.choice([1, 2]))
+            module_hub_context[hub] = context_idx
+            target = corr1 if context_idx == 1 else corr2
+            h = nodes.index(hub)
+            row = target[h, :] * module_hub_scale
+            target[h, :] = row
+            target[:, h] = row
+            target[h, h] = 1.0
+    # Ground-truth module-hub edges: every edge of the hub whose latent correlation differs by at least
+    # corr_low between the contexts, with its realised difference (read off the final matrices, so two
+    # hubs of one module that share an edge are handled exactly).
+    for hub in module_hub_nodes:
+        h = nodes.index(hub)
+        delta = np.abs(corr1[h, :] - corr2[h, :])
+        for j in np.flatnonzero(delta >= max(corr_low, 1e-12)):
+            if j != h:
+                module_hub_edge_magnitude[frozenset((hub, nodes[j]))] = float(delta[j])
+    for hub in module_hub_nodes:
+        incident = [m for edge, m in module_hub_edge_magnitude.items() if hub in edge]
+        node_degree[hub] = len(incident)
+        node_sum_magnitude[hub] = float(sum(incident))
 
     mean_vector1 = np.zeros(n_vars)
     mean_vector2 = np.zeros(n_vars)
@@ -658,13 +749,17 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     # Per-node ground-truth stats (n_edges_tweaked, sum_corr), for every node that is
     # a ground-truth node at all -- a mean-shift-only node has no entry in node_degree/
     # node_sum_magnitude, so it correctly falls back to (0, 0.0) via save_gt's own .get() default.
-    gt_nodes = set(shift_nodes) | set(hub_nodes)
+    gt_nodes = set(shift_nodes) | set(hub_nodes) | set(module_hub_nodes)
+    gt_nodes.update(p for partners in hub_partners.values() for p in partners)
     for pair in corr_nodes + shift_corr_nodes:
         gt_nodes.update(pair)
     node_stats = {node: (node_degree.get(node, 0), node_sum_magnitude.get(node, 0.0)) for node in gt_nodes}
     effects = {'edge_magnitude': edge_magnitude, 'node_degree': node_degree, 'node_sum_magnitude': node_sum_magnitude,
                'node_shift_magnitude': node_shift_magnitude,
-               'hub_nodes': hub_nodes, 'hub_edge_magnitude': hub_edge_magnitude, 'hub_context': hub_context,
+               'hub_nodes': hub_nodes, 'hub_partners': hub_partners, 'hub_edge_magnitude': hub_edge_magnitude,
+               'hub_context': hub_context, 'hub_redraws': hub_redraws,
+               'module_hub_nodes': module_hub_nodes, 'module_hub_edge_magnitude': module_hub_edge_magnitude,
+               'module_hub_context': module_hub_context,
                'corr_matrix1': corr1, 'corr_matrix2': corr2,
                'mean_vector1': mean_vector1, 'mean_vector2': mean_vector2,
                'node_order': list(nodes), 'marginals': marginals,
@@ -677,8 +772,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         context1.to_csv(os.path.join(path, f'{name1}.csv'))
         context2.to_csv(os.path.join(path, f'{name2}.csv'))
         meta.to_csv(os.path.join(path, 'meta.csv'), index=False)
-        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth_nodes.txt'), mode='node', node_stats=node_stats, node_shift_magnitude=node_shift_magnitude, hub_nodes=hub_nodes)
-        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth_edges.txt'), mode='edge', edge_magnitude=edge_magnitude, hub_edge_magnitude=hub_edge_magnitude)
+        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth_nodes.txt'), mode='node', node_stats=node_stats, node_shift_magnitude=node_shift_magnitude, hub_partners=hub_partners, module_hub_nodes=module_hub_nodes)
+        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth_edges.txt'), mode='edge', edge_magnitude=edge_magnitude, hub_edge_magnitude=hub_edge_magnitude, module_hub_edge_magnitude=module_hub_edge_magnitude)
 
     return context1, context2, meta, (shift_nodes, corr_nodes, shift_corr_nodes), effects
 
@@ -837,7 +932,7 @@ def _simu_gaussian(n: int, m: int, corr_matrix: np.ndarray, mean_vector: Optiona
 
 # Save ground truth nodes to file
 def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=None, node_shift_magnitude=None,
-            hub_nodes=None, hub_edge_magnitude=None):
+            hub_partners=None, hub_edge_magnitude=None, module_hub_nodes=None, module_hub_edge_magnitude=None):
     """
     Write ground truth nodes or edges to a two- (or, with the optional data below, wider-) column file.
 
@@ -860,11 +955,14 @@ def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=Non
                                  0.0. Omit to reproduce the file exactly as it was before this
                                  column existed.
 
-    :param hub_nodes: Optional, mode='node' only. Rewired hub nodes (`effects['hub_nodes']`), written with
-                      description 'hub rewiring'.
-    :param hub_edge_magnitude: Optional, mode='edge' only. Ground-truth hub edges (`effects['hub_edge_magnitude']`),
-                               written with description 'hub rewiring' and, in the `corr` column, their realised
-                               latent correlation difference.
+    :param hub_partners: Optional, mode='node' only. Planted hubs and their partners (`effects['hub_partners']`,
+                         hub -> partners): each hub is written as 'hub', each partner as 'hub partner'.
+    :param hub_edge_magnitude: Optional, mode='edge' only. Planted hub edges (`effects['hub_edge_magnitude']`),
+                               written as 'hub' with their realised latent correlation difference in `corr`.
+    :param module_hub_nodes: Optional, mode='node' only. Module hubs (`effects['module_hub_nodes']`), written
+                             as 'module hub'. Their partners are not written.
+    :param module_hub_edge_magnitude: Optional, mode='edge' only. Ground-truth module-hub edges
+                                      (`effects['module_hub_edge_magnitude']`), written as 'module hub'.
 
     The magnitude columns are named `shift` and `corr` after the quantity they hold, matching the
     `shift_low`/`shift_high` and `corr_low`/`corr_high` parameters the values are drawn from.
@@ -899,8 +997,12 @@ def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=Non
             for pair in shift_corr:
                 _write_node(pair[0], 'mean shift + diff. corr.')
                 _write_node(pair[1], 'mean shift + diff. corr.')
-            for node in hub_nodes or []:
-                _write_node(node, 'hub rewiring')
+            for hub, partners in (hub_partners or {}).items():
+                _write_node(hub, 'hub')
+                for partner in partners:
+                    _write_node(partner, 'hub partner')
+            for node in module_hub_nodes or []:
+                _write_node(node, 'module hub')
 
     if mode == 'edge':
         with open(path, 'w') as f:
@@ -920,9 +1022,10 @@ def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=Non
                 _write_edge(pair, 'diff. corr.')
             for pair in shift_corr:
                 _write_edge(pair, 'mean shift + diff. corr.')
-            for pair, magnitude in (hub_edge_magnitude or {}).items():
-                line = f'{"_".join(sorted(pair))}, hub rewiring'
-                if edge_magnitude is not None:
-                    line += f', {magnitude}'
-                f.write(line + '\n')
+            for description, magnitudes in (('hub', hub_edge_magnitude), ('module hub', module_hub_edge_magnitude)):
+                for pair, magnitude in (magnitudes or {}).items():
+                    line = f'{"_".join(sorted(pair))}, {description}'
+                    if edge_magnitude is not None:
+                        line += f', {magnitude}'
+                    f.write(line + '\n')
 
