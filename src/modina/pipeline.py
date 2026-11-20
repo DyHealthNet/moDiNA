@@ -1,7 +1,7 @@
 from modina.context_net_inference import compute_context_scores
 from modina.diff_net_construction import compute_diff_network
 from modina.edge_filtering import filter, filter_differential
-from modina.ranking import compute_ranking
+from modina.ranking import compute_ranking, check_pagerank_damping
 from modina.metrics import check_edge_metric, check_node_metric, check_ranking_alg, check_rescaling_consistency
 
 import json
@@ -13,6 +13,7 @@ import pandas as pd
 
 # Wrapper function to perform the whole moDiNA pipeline
 def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: pd.DataFrame, edge_metric: Optional[str] = None, node_metric: Optional[str] = None, ranking_alg: str = 'PageRank+',
+                     pagerank_damping: float = 0.85,
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None, filter_target: Optional[str] = None,
                      test_type: str = 'nonparametric', nan_value: Optional[int] = None,
                      correction: str = 'bh', correction_scope: str = 'global', num_workers: int=1, n_min_valid: int = 10,
@@ -37,6 +38,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param edge_metric: Edge metric used to construct the differential network: 'diff-<score>' with score P, LP, RE, VE, LPxRE or LPxVE, or 'sum-LP-VE' / 'sum-LP-RE'.
     :param node_metric: Node metric used to construct the differential network: '<family>-<score>' with family WDC, PRC or STC and the same scores as for edge metrics.
     :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'MeanEdgeRank', 'MedianEdgeRank', 'nodeRank', 'MeanProductRank' and 'MedianProductRank'. Defaults to 'PageRank+'.
+    :param pagerank_damping: Damping factor (alpha) of 'PageRank+' and 'PageRank', in [0, 1). Ignored by the other ranking algorithms. Defaults to 0.85.
     :param name1: Name of Context 1. Used for saving files. Defaults to 'context1'.
     :param name2: Name of Context 2. Used for saving files. Defaults to 'context2'.
     :param project_path: Optional path to save results. Defaults to None.
@@ -49,6 +51,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     if node_metric is not None:
         check_node_metric(node_metric)
     check_ranking_alg(ranking_alg)
+    check_pagerank_damping(pagerank_damping)
     check_rescaling_consistency(node_metric, edge_metric, ranking_alg)
 
     if project_path is not None:
@@ -121,7 +124,8 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     # Ranking
     logging.info('Computing ranking...')
     ranking = compute_ranking(edges_diff=edges_diff, nodes_diff=nodes_diff, ranking_alg=ranking_alg,
-                              path=ranking_path, meta_file=meta_file, edge_node_stats=edge_node_stats)
+                              path=ranking_path, meta_file=meta_file, edge_node_stats=edge_node_stats,
+                              pagerank_damping=pagerank_damping)
     logging.info('Done.')
 
     # Create config dict
@@ -139,7 +143,8 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         'filter_target': filter_target,
         'edge_metric': edge_metric,
         'node_metric': node_metric,
-        'ranking_alg': ranking_alg
+        'ranking_alg': ranking_alg,
+        'pagerank_damping': pagerank_damping
     }
 
     if config_path is not None:
