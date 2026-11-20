@@ -5,6 +5,8 @@ import pandas as pd
 from scipy import stats
 from typing import Optional, Tuple
 
+from modina.metrics import check_metric_pvalue
+
 
 # Convert Cohen's d to point-biserial r for ttest edges.
 # Note: uses one (n1, n2) for all edges, ignoring pairwise missingness; compute_context_scores
@@ -65,13 +67,25 @@ def check_correction_scope(correction_scope):
     return correction_scope
 
 
-# Materialize p-value transforms used by the differential metrics.
-# Computes (idempotently) two columns derived from the adjusted p-value 'raw-P':
+# The p-values a context's scores are built from: 'raw-P' (unadjusted) or 'adj-P' (multiple-testing adjusted),
+# see metrics.PVALUE_COLUMNS. Score tables written before 'adj-P' existed stored the *adjusted* p-value under
+# 'raw-P'; they have no 'adj-P' column and are rejected instead of silently reading them as unadjusted.
+def _pvalues(scores, pvalue='adj-P'):
+    check_metric_pvalue(pvalue)
+    if 'adj-P' not in scores.columns:
+        raise ValueError("The scores have no 'adj-P' column. They were probably computed with an older moDiNA version, "
+                         "in which 'raw-P' held the adjusted p-value. Please recompute them with compute_context_scores.")
+    return scores[pvalue].to_numpy(dtype=float)
+
+
+# Materialize p-value transforms of one p-value column ('adj-P' by default):
 #   log-P = -log10(p)   (significance strength; higher = more significant)
 #   inv-P = 1 - p       (linear significance strength in [0, 1])
-def add_pval_transforms(scores):
-    scores['log-P'] = _neglog10_p(scores['raw-P'].to_numpy(dtype=float))
-    scores['inv-P'] = 1.0 - scores['raw-P']
+# Stored for inspection only: the differential metrics recompute their scores in add_score_columns.
+def add_pval_transforms(scores, pvalue='adj-P'):
+    p = _pvalues(scores, pvalue)
+    scores['log-P'] = _neglog10_p(p)
+    scores['inv-P'] = 1.0 - p
     return scores
 
 
@@ -90,7 +104,7 @@ def _neglog10_p(p):
 UNSIGNED_TEST_TYPES = frozenset({'chi2', 'anova', 'kruskal'})
 
 
-# Signed z-score of the adjusted p-value 'raw-P', the per-context ingredient of diff-Z.
+# Signed z-score of a p-value ('adj-P' or 'raw-P', see metric_pvalue), the per-context ingredient of diff-Z.
 # z = Phi^-1(1 - p/2), floored like LP (p = 0 -> min non-zero p / 10), with the sign of the effect size for
 # directional effect sizes (Pearson, Spearman, point-biserial and rank-biserial r) and a positive sign for the
 # unsigned ones (UNSIGNED_TEST_TYPES). Unlike LP, which grows with the square of the test statistic, z grows
@@ -204,10 +218,12 @@ def _probit_magnitude(abs_values):
 # Add the per-context score columns that every differential metric is built from (see
 # metrics.SCORE_TYPES): P = 1 - p, LP = -log10(p), RE = rank-based probit rescaled effect size,
 # VE = variance-explained effect size, and the products LPxRE and LPxVE.
-# P, LP and VE are always recomputed from 'raw-P'/'raw-E' rather than reusing cached 'log-P',
-# 'inv-P' or 'transformed-E' columns. RE reuses 'rescaled-E' when both contexts already carry it,
-# as it is a joint cross-context transform that the pipeline computes before filtering.
-def add_score_columns(scores1, scores2):
+# p is the p-value column chosen by metric_pvalue: 'adj-P' (multiple-testing adjusted, default) or
+# 'raw-P' (unadjusted). P, LP and VE are always recomputed from that column and 'raw-E' rather than
+# reusing cached 'log-P', 'inv-P' or 'transformed-E' columns. RE reuses 'rescaled-E' when both
+# contexts already carry it, as it is a joint cross-context transform that the pipeline computes
+# before filtering.
+def add_score_columns(scores1, scores2, metric_pvalue='adj-P'):
     if 'rescaled-E' in scores1.columns and 'rescaled-E' in scores2.columns:
         scores1 = scores1.copy()
         scores2 = scores2.copy()
@@ -215,7 +231,7 @@ def add_score_columns(scores1, scores2):
         scores1, scores2 = probit_rescaling(scores1, scores2, metric='rescaled-E')
 
     for scores in (scores1, scores2):
-        p = scores['raw-P'].to_numpy(dtype=float)
+        p = _pvalues(scores, metric_pvalue)
         lp = _neglog10_p(p)
         re = scores['rescaled-E'].to_numpy(dtype=float)
         ve = _r2_transform(scores['raw-E'], scores['test_type'])

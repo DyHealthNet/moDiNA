@@ -2,7 +2,7 @@ from modina.context_net_inference import compute_context_scores
 from modina.diff_net_construction import compute_diff_network
 from modina.edge_filtering import filter, filter_differential
 from modina.ranking import compute_ranking, check_pagerank_damping
-from modina.metrics import check_edge_metric, check_node_metric, check_ranking_alg, check_rescaling_consistency
+from modina.metrics import check_edge_metric, check_node_metric, check_ranking_alg, check_rescaling_consistency, check_metric_pvalue
 
 import json
 import logging
@@ -16,7 +16,8 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
                      pagerank_damping: float = 0.85,
                      filter_method: Optional[str] = None, filter_param: float = 0.0, filter_metric: Optional[str] = None, filter_rule: Optional[str]=None, filter_target: Optional[str] = None,
                      test_type: str = 'nonparametric', nan_value: Optional[int] = None,
-                     correction: str = 'bh', correction_scope: str = 'global', num_workers: int=1, n_min_valid: int = 10,
+                     correction: str = 'bh', correction_scope: str = 'global', metric_pvalue: str = 'adj-P',
+                     num_workers: int=1, n_min_valid: int = 10,
                      project_path: Optional[str] = None, name1: str = 'context1', name2: str = 'context2'):
     """
     Wrapper function to perform an end-to-end differential network analysis following the moDiNA pipeline.
@@ -28,6 +29,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param nan_value: Numerical value used for NaN values in the context data. If None, an error will be raised if such values are present. Defaults to None.
     :param correction: Correction method for multiple testing. Defaults to 'bh'.
     :param correction_scope: Scope of the multiple-testing correction. 'global' pools all edges (and all nodes for STC) into one family; 'local' corrects separately within each statistical test type and, for STC, within each test type used to compare nodes across contexts (chi-squared for nominal/binary nodes, Mann-Whitney U for ordinal nodes, and t-test or Mann-Whitney U for continuous nodes). Defaults to 'global'.
+    :param metric_pvalue: P-value the p-value based scores (P, LP, LPxRE, LPxVE, Z) of the edge and node metrics are computed from: 'adj-P' (multiple-testing adjusted) or 'raw-P' (unadjusted). Both are always stored in the score tables, so the adjusted p-values stay available with 'raw-P'. For STC it selects the adjusted or unadjusted node test p-value; both are kept in the node output. Defaults to 'adj-P'.
     :param num_workers: Number of workers for parallel processing. Defaults to 1.
     :param n_min_valid: Minimum number of samples (after pairwise removal of missing values) a pairwise association test must be based on. Edges below this in either context are removed from both. Defaults to 10.
     :param filter_method: Method used for filtering. Defaults to None.
@@ -52,6 +54,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         check_node_metric(node_metric)
     check_ranking_alg(ranking_alg)
     check_pagerank_damping(pagerank_damping)
+    check_metric_pvalue(metric_pvalue)
     check_rescaling_consistency(node_metric, edge_metric, ranking_alg)
 
     if project_path is not None:
@@ -101,7 +104,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
                                                   correction=correction, correction_scope=correction_scope,
                                                   path=project_path, format='csv',
                                                   meta_file=meta_file, test_type=test_type, nan_value=nan_value,
-                                                  name1=name1, name2=name2)
+                                                  name1=name1, name2=name2, metric_pvalue=metric_pvalue)
     logging.info('Done.')
 
     # Differential filtering (after differential network construction)
@@ -135,6 +138,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
         'test_type': test_type,
         'correction':  correction,
         'correction_scope': correction_scope,
+        'metric_pvalue': metric_pvalue,
         'n_min_valid': n_min_valid,
         'filter_method': filter_method,
         'filter_metric': filter_metric,

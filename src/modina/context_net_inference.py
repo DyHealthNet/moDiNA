@@ -133,11 +133,13 @@ def calculate_association_scores(ord_data, nom_data, cont_data, bi_data, test_ty
     #             anova, kruskal), so that e.g. the many Pearson tests between continuous variables
     #             do not dominate the correction of the (far fewer) tests of other types.
     #             Untested pairs (test_type None) have NaN p-values and are excluded anyway.
+    # 'raw-P' keeps the unadjusted p-value; the adjusted one is stored next to it as 'adj-P'.
     if correction_scope == 'local':
         test_groups = scores_final['test_type'].fillna('untested').to_numpy()
     else:
         test_groups = None
-    scores_final['raw-P'] = fdr_correction(scores_final['raw-P'].to_numpy(), method=correction, groups=test_groups)
+    adj_p = fdr_correction(scores_final['raw-P'].to_numpy(), method=correction, groups=test_groups)
+    scores_final.insert(scores_final.columns.get_loc('raw-P') + 1, 'adj-P', adj_p)
     logging.info(f"Finished multiple-testing correction across edges (scope: {correction_scope}).")
 
     return scores_final
@@ -162,7 +164,7 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     :param name: Name of the context. Used for saving files. Defaults to 'context'.
     :param n_min_valid: Minimum number of samples (after pairwise removal of missing values) a pairwise test must be based on. Pairs below this are excluded from this context's network (and, during differential analysis, from the other context's as well). Defaults to 10.
     :param correction_scope: Scope of the multiple-testing correction. 'global' pools all edges into one correction family; 'local' corrects separately within each statistical test type (e.g. Pearson, Spearman, t-test, Mann-Whitney U, chi-squared, Kruskal-Wallis). Defaults to 'global'.
-    :return: A pd.DataFrame containing the computed association scores.
+    :return: A pd.DataFrame containing the computed association scores, with the unadjusted p-value ('raw-P'), the multiple-testing adjusted p-value ('adj-P'), the effect size ('raw-E'), the test used ('test_type') and the number of samples tested ('n') per edge.
     """
     check_correction_scope(correction_scope)
     # Check nan values and input format
@@ -232,8 +234,8 @@ def compute_context_scores(context_data: pd.DataFrame, meta_file: pd.DataFrame,
     logging.info(f"Dropped {len(scores_na) - n_low} pair(s) where NApy could not compute a valid test result "
                  f"and {n_low} pair(s) tested on fewer than n_min_valid={n_min_valid} samples.")
 
-    # Precompute p-value transforms (log-P = -log10(p), inv-P = 1 - p) used by the
-    # differential edge/node metrics. Safe now that every remaining row has a real 'raw-P'.
+    # Precompute p-value transforms of the adjusted p-value (log-P = -log10(adj-P), inv-P = 1 - adj-P)
+    # for inspection. Safe now that every remaining row has a real 'raw-P' (and thus 'adj-P').
     scores = add_pval_transforms(scores)
 
     # Attach both diagnostics to the returned DataFrame so same-process callers (e.g. the

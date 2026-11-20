@@ -3,12 +3,19 @@ from typing import Optional
 
 # Score types computed per context (see statistics_utils.add_score_columns). Every edge and node
 # metric is built from one of these, so the same score can be compared across metric families:
-#   P     = 1 - p             (linear significance; p is the multiple-testing adjusted p-value)
+#   P     = 1 - p             (linear significance; p is the column chosen by metric_pvalue, see below)
 #   LP    = -log10(p)         (log significance)
 #   RE    = rank-based probit rescaled effect size (rescaled-E)
 #   VE    = variance-explained effect size (transformed-E, sign(r) * r² or η²)
 #   LPxRE = LP * RE,  LPxVE = LP * VE
 SCORE_TYPES = ('P', 'LP', 'RE', 'VE', 'LPxRE', 'LPxVE')
+
+# P-value columns of the per-context score tables (see context_net_inference.calculate_association_scores):
+#   'raw-P' = unadjusted p-value of the association test
+#   'adj-P' = multiple-testing adjusted p-value (BH/BY, scope set by correction_scope)
+# Both are always stored; metric_pvalue picks the one the p-value based scores (P, LP, LPxRE, LPxVE and diff-Z)
+# are computed from. For STC it picks the adjusted or unadjusted p-value of the node test.
+PVALUE_COLUMNS = ('adj-P', 'raw-P')
 
 # Edge metrics, mapped to the score types whose absolute between-context differences are summed.
 # 'diff-Z' is not a plain difference of one score: it compares the standardised effect sizes z / sqrt(n) of both
@@ -67,6 +74,12 @@ def check_node_metric(node_metric: str) -> str:
     if node_metric not in NODE_METRICS:
         raise ValueError(f"Invalid node metric '{node_metric}'. Choose from: {', '.join(NODE_METRICS)}.")
     return node_metric
+
+
+def check_metric_pvalue(metric_pvalue: str) -> str:
+    if metric_pvalue not in PVALUE_COLUMNS:
+        raise ValueError(f"Invalid metric_pvalue '{metric_pvalue}'. Choose from: {', '.join(PVALUE_COLUMNS)}.")
+    return metric_pvalue
 
 
 def check_ranking_alg(ranking_alg: str) -> str:

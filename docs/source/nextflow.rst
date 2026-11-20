@@ -269,7 +269,7 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
    * - ``diff_net_analysis.filter_metric``
      - ``string``
      - ``'raw-P'``
-     - Edge score used as the basis for filtering. One of: ``raw-P``, ``rescaled-E``. Required when ``filter_method`` is set and ``filter_target`` is ``context-specific``.
+     - Edge score used as the basis for filtering. One of: ``raw-P`` (unadjusted p-value), ``adj-P`` (adjusted p-value), ``rescaled-E``. Required when ``filter_method`` is set and ``filter_target`` is ``context-specific``.
    * - ``diff_net_analysis.filter_rule``
      - ``string``
      - ``'zero'``
@@ -289,7 +289,11 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
    * - ``diff_net_analysis.multiple_testing``
      - ``string``
      - ``'bh'``
-     - Multiple testing correction method applied to association p-values. One of: ``bh`` (Benjamini–Hochberg), ``by`` (Benjamini–Yekutieli).
+     - Multiple testing correction method applied to association p-values. One of: ``bh`` (Benjamini–Hochberg), ``by`` (Benjamini–Yekutieli). The unadjusted p-value is stored as ``raw-P``, the adjusted one as ``adj-P``.
+   * - ``diff_net_analysis.metric_pvalue``
+     - ``string``
+     - ``'adj-P'``
+     - P-value the p-value based edge and node scores (P, LP, LPxRE, LPxVE, diff-Z) are computed from. One of: ``adj-P`` (adjusted), ``raw-P`` (unadjusted). Both stay in the score and edge files. For STC it selects the adjusted or unadjusted node test p-value; both are kept in the node metric files.
 
 
 Usage 
