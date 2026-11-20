@@ -39,18 +39,18 @@ def _num_target_edges(filter_method: Optional[str], filter_param: float, n_nodes
 def _edge_keep_mask(scores: pd.DataFrame, filter_metric: str, n_target: int) -> pd.Series:
     """
     Compute a boolean 'keep' mask for a single network that retains the n_target strongest
-    edges according to filter_metric. For 'raw-P' the smallest p-values are kept; for
+    edges according to filter_metric. For 'raw-P' (unadjusted) and 'adj-P' (adjusted) the smallest p-values are kept; for
     'rescaled-E' the largest absolute effect sizes are kept. Ties at the threshold are kept,
     so the mask may retain slightly more than n_target edges.
     """
-    if filter_metric == 'raw-P':
+    if filter_metric in ('raw-P', 'adj-P'):
         threshold = scores[filter_metric].sort_values(ascending=True).iloc[n_target - 1]
         return scores[filter_metric] <= threshold
     elif filter_metric == 'rescaled-E':
         threshold = np.abs(scores[filter_metric]).sort_values(ascending=False).iloc[n_target - 1]
         return np.abs(scores[filter_metric]) >= threshold
     else:
-        raise ValueError(f"Invalid filter metric '{filter_metric}'. Choose from: 'raw-P' or 'rescaled-E'.")
+        raise ValueError(f"Invalid filter metric '{filter_metric}'. Choose from: 'raw-P', 'adj-P' or 'rescaled-E'.")
 
 
 # Edge filtering (two context-specific networks)
@@ -67,7 +67,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
     :param context2: The second context for the differential network analysis.
     :param filter_method: Method used for filtering. Defaults to None.
     :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
-    :param filter_metric: Edge metric used for filtering. Options include 'raw-P' and 'rescaled-E'. Defaults to None.
+    :param filter_metric: Edge metric used for filtering. Options include 'raw-P' (unadjusted p-value), 'adj-P' (adjusted p-value) and 'rescaled-E'. Defaults to None.
     :param filter_rule: Rule to integrate the networks during filtering. Defaults to None.
     :param path: Optional path to save the filtered scores and context data as CSV files. Defaults to None.
     :return: A tuple containing the filtered scores and context data.
@@ -131,6 +131,7 @@ def filter(scores1: pd.DataFrame, scores2: pd.DataFrame, context1: pd.DataFrame,
 
         fill_values = {
             'raw-P': 1.0,
+            'adj-P': 1.0,
             'raw-E': 0.0,
             'rescaled-E': 0.0,
             'log-P': 0.0,
@@ -193,7 +194,7 @@ def filter_single(scores: pd.DataFrame, context: pd.DataFrame,
     :param context: Observed data of the context (rows: samples, columns: variables).
     :param filter_method: Method used for filtering ('degree' or 'density'). Defaults to None.
     :param filter_param: Parameter for the specified filtering method. Defaults to 0.0.
-    :param filter_metric: Edge metric used for filtering. Options are 'raw-P' and 'rescaled-E'. Defaults to None.
+    :param filter_metric: Edge metric used for filtering. Options are 'raw-P' (unadjusted p-value), 'adj-P' (adjusted p-value) and 'rescaled-E'. Defaults to None.
     :param path: Optional path to save the filtered scores and context data as CSV files. Defaults to None.
     :return: A tuple (scores_filtered, context_filtered) with the filtered scores and context data.
     """
@@ -211,7 +212,7 @@ def filter_single(scores: pd.DataFrame, context: pd.DataFrame,
     if filter_metric == 'rescaled-E' and 'rescaled-E' not in scores.columns:
         raise ValueError("Filtering a single network on 'rescaled-E' requires the 'rescaled-E' column to "
                          "already be present, as it is computed by a joint rescaling over both contexts. "
-                         "Please filter on 'raw-P' instead, or provide already-rescaled scores.")
+                         "Please filter on 'raw-P' or 'adj-P' instead, or provide already-rescaled scores.")
 
     n_nodes = context.shape[1]
     n_edges_before = scores.shape[0]

@@ -204,11 +204,12 @@ Parameters:
 - ``filter_method``: Filtering method. Options include ``'degree'``, ``'density'``. Required when ``filter_target`` is not ``None``.
 - ``filter_param``: Parameter controlling the filtering strength.
 - ``filter_target``: Which network to filter. ``None`` (default) performs no filtering. ``'context-specific'`` filters the two context networks *before* constructing the differential network (using ``filter_metric`` and ``filter_rule``); ``'differential'`` filters the differential network *after* its construction, directly on the computed ``edge_metric`` (in this case ``filter_metric`` and ``filter_rule`` are ignored). When ``filter_target`` is not ``None``, ``filter_method`` must be provided.
-- ``filter_metric``: Edge metric used for filtering. Options include ``'raw-P'`` and ``'rescaled-E'``. Only used when ``filter_target='context-specific'``.
+- ``filter_metric``: Edge metric used for filtering. Options include ``'raw-P'`` (unadjusted p-value), ``'adj-P'`` (multiple testing-adjusted p-value) and ``'rescaled-E'``. Only used when ``filter_target='context-specific'``.
 - ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'``. Only used when ``filter_target='context-specific'``.
 - ``test_type``: Statistical test used for association score calculation. Options include ``'parametric'`` and ``'nonparametric'``. Defaults to ``'nonparametric'``.
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
 - ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.
+- ``metric_pvalue``: P-value the p-value based scores (``P``, ``LP``, ``LPxRE``, ``LPxVE`` and ``diff-Z``) are computed from: ``'adj-P'`` (multiple testing-adjusted) or ``'raw-P'`` (unadjusted). Both p-values are always stored, so the adjusted p-values remain available when the metrics use ``'raw-P'``. For the ``STC`` node metrics it selects the adjusted or unadjusted node test p-value; both are kept in the node output. Defaults to ``'adj-P'``.
 - ``num_workers``: Number of parallel workers used during score computation. Defaults to ``1``.
 - ``n_min_valid``: Minimum number of samples, after pairwise removal of missing values, that a pairwise association test must be based on. Edges tested on fewer samples in either context are removed from both context networks. Defaults to ``10``.
 - ``project_path``: Optional directory where intermediate results and output files will be stored.
@@ -266,7 +267,7 @@ Context Network Inference
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 To infer context-specific networks, the ``compute_context_scores`` function calculates association scores for a single biological context. 
-Parametric (P) or non-parametric (NP) data type-specific tests and multiple testing correction is performed using `NApy <https://github.com/DyHealthNet/NApy>`_, 
+Parametric (P) or non-parametric (NP) data type-specific tests are performed using `NApy <https://github.com/DyHealthNet/NApy>`_, 
 which efficiently computes pairwise statistical tests and provides enhanced support 
 for missing data. Missing values must be encoded as a common numerical value.
 The resulting effect sizes and p-values quantify the strength of the relationships between variables 
@@ -332,7 +333,11 @@ Parameters:
 
 Returns:
 
-A pandas DataFrame containing the computed association scores for all variable pairs.
+A pandas DataFrame containing the computed association scores for all variable pairs, with the columns
+``label1``, ``label2``, ``raw-P`` (unadjusted p-value), ``adj-P`` (p-value adjusted for multiple testing with
+``correction`` across all edges, or per test type with ``correction_scope='local'``), ``raw-E`` (effect size),
+``test_type`` and ``n`` (number of samples the test is based on). ``log-P`` and ``inv-P`` are
+:math:`-\log_{10}` and :math:`1 -` the adjusted p-value.
 
 Example:
 
@@ -372,7 +377,8 @@ desired network characteristic. The ``degree`` method reduces a network to a spe
 Filtering the context-specific networks (``filter`` / ``filter_single``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Context-specific filtering orders the edges of each context network according to a ``filter_metric`` — either the
-multiple testing-adjusted p-value (``'raw-P'``) or the absolute Z-score-normalized effect size (``'rescaled-E'``).
+unadjusted p-value (``'raw-P'``), the multiple testing-adjusted p-value (``'adj-P'``) or the absolute Z-score-normalized
+effect size (``'rescaled-E'``).
 
 When filtering the two context networks jointly with ``filter``, there are two alternative rules for integrating them.
 The ``union`` rule retains all edges that are present in either network, preserving their original association scores.
@@ -383,7 +389,7 @@ Under the ``zero`` rule, removed edges are treated as missing and will be assign
 The ``filter_single`` function filters a single network with the same ``filter_method``/``filter_param``/``filter_metric``
 options, but without a ``filter_rule`` (there is only one network, so nothing has to be integrated). Filtering a single
 network on ``'rescaled-E'`` requires the ``rescaled-E`` column to already be present, since it is produced by a joint
-rescaling over both contexts; otherwise filter on ``'raw-P'``.
+rescaling over both contexts; otherwise filter on ``'raw-P'`` or ``'adj-P'``.
 
 Parameters:
 
@@ -391,7 +397,7 @@ Parameters:
 - ``context1``, ``context2``: pandas DataFrames with the raw context data for Context 1 and Context 2.
 - ``filter_method``: Filtering method to apply. Options include ``'degree'`` or ``'density'``. Defaults to None (no filtering).
 - ``filter_param``: Parameter controlling the strength or threshold of the filtering method.
-- ``filter_metric``: Edge metric used as the basis for filtering. Options include the multiple testing-adjusted p-value (use ``'raw-P'``) or the absolute value of the Z-score-normalized effect size (use ``'rescaled-E'``).
+- ``filter_metric``: Edge metric used as the basis for filtering. Options include the unadjusted p-value (use ``'raw-P'``), the multiple testing-adjusted p-value (use ``'adj-P'``) or the absolute value of the Z-score-normalized effect size (use ``'rescaled-E'``).
 - ``filter_rule``: Rule used to integrate the two networks during filtering. Options include ``'union'`` and ``'zero'`` .
 - ``path``: Optional path to save the filtered scores and context data as CSV files. Defaults to None.
 
@@ -501,7 +507,7 @@ Two context-specific networks are aggregated into a differential network using a
 variety of node- and edge-level metrics provided in the ``compute_diff_network`` function. 
 All metrics are built from the same per-context scores, so every score can be compared across the
 edge and node metric families. For each edge (association test) in a context, with :math:`p` the
-multiple testing-adjusted p-value and :math:`E` the effect size:
+p-value and :math:`E` the effect size:
 
 - ``P`` :math:`= 1 - p`: linear significance.
 - ``LP`` :math:`= -\log_{10}(p)`: log significance, which resolves p-values across orders of magnitude.
@@ -516,6 +522,11 @@ multiple testing-adjusted p-value and :math:`E` the effect size:
 - ``LPxRE`` :math:`= LP \cdot RE` and ``LPxVE`` :math:`= LP \cdot VE`: combine the evidence for an
   association with its strength and direction, so that only significant *and* substantial
   associations obtain a high score.
+
+By default, :math:`p` is the multiple testing-adjusted p-value (``adj-P``). With ``metric_pvalue='raw-P'`` the
+unadjusted p-value (``raw-P``) is used instead. Both are always kept, in the score tables and in the differential
+edge output (``raw-P_<context>`` and ``adj-P_<context>``), so the adjusted p-values can be reported without
+entering the metrics.
 
 .. note::
    ``LP`` (and therefore ``LPxRE`` and ``LPxVE``) depends on the sample size as well as on the effect
@@ -536,13 +547,13 @@ Edge metrics:
      \text{diff-Z} = \frac{\left| z_1 / \sqrt{n_1} - z_2 / \sqrt{n_2} \right|}{\sqrt{1/n_1 + 1/n_2}},
      \qquad z_c = \Phi^{-1}(1 - p_c / 2) \cdot \operatorname{sign}(E_c),
 
-  with :math:`p_c` the adjusted p-value and :math:`n_c` the number of samples of the test in context
+  with :math:`p_c` the p-value (see ``metric_pvalue``) and :math:`n_c` the number of samples of the test in context
   :math:`c` (unsigned effect sizes, Cramér's V and :math:`\eta^2`, keep a positive sign).
   :math:`z_c / \sqrt{n_c}` is a standardised effect size (for a correlation approximately
   :math:`\operatorname{atanh}(r)`), so an association of equal strength gives ``diff-Z`` close to 0
   whatever the sample sizes, and a difference between two strong associations is not inflated. Each test
-  keeps its own p-value, so the metric applies to every test type, and non-significant associations are
-  shrunk towards 0 as in ``diff-LP``. It needs the per-edge sample size column ``n``, which
+  keeps its own p-value, so the metric applies to every test type. With adjusted p-values, non-significant
+  associations are shrunk towards 0 as in ``diff-LP``. It needs the per-edge sample size column ``n``, which
   ``compute_context_scores`` writes. It uses no effect-size rescaling and can be combined with every node metric.
 
 Node metrics (``<family>-<score>``, for every score above):
@@ -554,7 +565,8 @@ Node metrics (``<family>-<score>``, for every score above):
 - ``STC-<score>``: statistical test centrality. Each node is tested directly for a difference between the
   contexts (chi-squared test for nominal and binary nodes, Mann-Whitney U test for ordinal nodes, and t-test
   or Mann-Whitney U test for continuous nodes depending on ``test_type``), with multiple testing correction
-  across nodes. The scores are derived from the test's adjusted p-value and absolute effect size (Cramér's V,
+  across nodes. The node output keeps both the unadjusted (``raw-P``) and the adjusted (``adj-P``) p-value of the
+  node test; ``metric_pvalue`` selects which one the scores are derived from. The scores use that p-value and the absolute effect size (Cramér's V,
   rank-biserial or point-biserial correlation), with ``RE`` rank-based within each test and ``VE`` the squared
   effect size.
 
@@ -566,6 +578,7 @@ Parameters:
 - ``node_metric``: Node-level metric used to compute the differential network. Options are ``'<family>-<score>'`` with family ``WDC``, ``PRC`` or ``STC`` and score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE`` or ``LPxVE`` (e.g. ``'STC-P'``, ``'PRC-LPxRE'``) (see :ref:`diffnet`).
 - ``nan_value``: Numerical value used to replace missing values in the context data. If ``None``, an error is raised when missing values are present.
 - ``correction``: Multiple testing correction method. Options include ``'bh'`` (Benjamini-Hochberg) or ``'by'`` (Benjamini–Yekutieli). Defaults to ``'bh'``.
+- ``metric_pvalue``: P-value the p-value based scores are computed from: ``'adj-P'`` (multiple testing-adjusted) or ``'raw-P'`` (unadjusted). For the ``STC`` node metrics it selects the adjusted or unadjusted node test p-value; both are kept in the node output. Defaults to ``'adj-P'``.
 - ``path``: Optional directory where the computed differential scores will be saved.
 - ``format``: Output format used when saving the differential network. Options include ``'csv'`` and ``'graphml'``. Defaults to ``'csv'``.
 - ``meta_file``: pandas DataFrame containing metadata about the variables. Must include the columns ``label`` and ``type``. Required when using the ``STC`` node metrics.
