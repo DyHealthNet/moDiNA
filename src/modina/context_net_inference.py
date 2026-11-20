@@ -498,10 +498,6 @@ def _combine_tests(*result_groups) -> pd.DataFrame:
         for test in results:
             if test is None:
                 continue
-            # Convert all columns except 'label1' and 'label2' to float32
-            cols_to_convert = test.columns.difference(['label1', 'label2'])
-            test[cols_to_convert] = test[cols_to_convert].astype('float32')
-
             if merged is None:
                 merged = test
                 continue
