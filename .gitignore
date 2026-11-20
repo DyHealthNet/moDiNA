@@ -4,3 +4,5 @@ src/moDiNA.egg-info/
 docs/build/
 docs/_build/
 docs/source/_templates/
+__pycache__/
+.pytest_cache/
