@@ -253,7 +253,7 @@ Differential Network Analysis Parameters (``diff_net_analysis.*``)
    * - ``diff_net_analysis.ranking_algorithm``
      - ``string``
      - ``'PageRank+'``
-     - Algorithm used to rank nodes and edges in the differential network. Used when ``run_type = 'single'``. One of: ``PageRank+``, ``PageRank``, ``MeanEdgeRank``, ``MedianEdgeRank``, ``nodeRank``, ``MeanProductRank``, ``MedianProductRank``. Configurations combining a node and an edge metric (``PageRank+``, ``MeanProductRank``, ``MedianProductRank``) are skipped with a warning if one metric uses the RE and the other the VE effect-size rescaling.
+     - Algorithm used to rank nodes and edges in the differential network. Used when ``run_type = 'single'``. One of: ``PageRank+``, ``PageRank``, ``MeanEdgeRank``, ``MedianEdgeRank``, ``MaxEdgeRank``, ``nodeRank``, ``MeanProductRank``, ``MedianProductRank``, ``MaxProductRank``. Configurations combining a node and an edge metric (``PageRank+``, ``MeanProductRank``, ``MedianProductRank``, ``MaxProductRank``) are skipped with a warning if one metric uses the RE and the other the VE effect-size rescaling.
    * - ``diff_net_analysis.filter_method``
      - ``string``
      - ``''``

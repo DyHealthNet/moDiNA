@@ -39,7 +39,7 @@ def diffnet_analysis(context1: pd.DataFrame, context2: pd.DataFrame, meta_file: 
     :param filter_target: Which network to filter. None (default) performs no filtering. 'context-specific' filters the two context networks before building the differential network (using filter_metric and filter_rule); 'differential' filters the differential network on the computed edge_metric (filter_metric and filter_rule are ignored). When filter_target is not None, filter_method must be provided.
     :param edge_metric: Edge metric used to construct the differential network: 'diff-<score>' with score P, LP, RE, VE, LPxRE or LPxVE, or 'sum-LP-VE' / 'sum-LP-RE'.
     :param node_metric: Node metric used to construct the differential network: '<family>-<score>' with family WDC, PRC or STC and the same scores as for edge metrics.
-    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'MeanEdgeRank', 'MedianEdgeRank', 'nodeRank', 'MeanProductRank' and 'MedianProductRank'. Defaults to 'PageRank+'.
+    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'MeanEdgeRank', 'MedianEdgeRank', 'MaxEdgeRank', 'nodeRank', 'MeanProductRank', 'MedianProductRank' and 'MaxProductRank'. Defaults to 'PageRank+'.
     :param pagerank_damping: Damping factor (alpha) of 'PageRank+' and 'PageRank', in [0, 1). Ignored by the other ranking algorithms. Defaults to 0.85.
     :param name1: Name of Context 1. Used for saving files. Defaults to 'context1'.
     :param name2: Name of Context 2. Used for saving files. Defaults to 'context2'.

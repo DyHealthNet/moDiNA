@@ -18,17 +18,18 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
 
     The output is additionally enriched with the node-metric value (when a node metric was employed)
     and with per-node statistics over the incident edges (when an edge metric was employed).
-    'MeanEdgeRank' / 'MedianEdgeRank' score each node by the mean / median edge metric over its
-    incident edges ('edge-mean' / 'edge-median'). 'MeanProductRank' / 'MedianProductRank' rank nodes by
-    the product of their rank by the node metric and their rank by that mean / median incident edge
-    metric; their score is therefore better when lower, while 'rank' is 1 for the top node for every
-    algorithm. Algorithms combining node and edge metrics ('PageRank+', 'MeanProductRank',
-    'MedianProductRank') require both to use the same effect-size rescaling (RE or VE); P- and LP-based
+    'MeanEdgeRank' / 'MedianEdgeRank' / 'MaxEdgeRank' score each node by the mean / median / maximum edge metric
+    over its incident edges ('edge-mean' / 'edge-median' / 'edge-max'). The maximum scores a node by its single
+    strongest change, which is not diluted by the many unchanged edges of a dense differential network.
+    'MeanProductRank' / 'MedianProductRank' / 'MaxProductRank' rank nodes by the product of their rank by the node
+    metric and their rank by that mean / median / maximum incident edge metric; their score is therefore better
+    when lower, while 'rank' is 1 for the top node for every algorithm. Algorithms combining node and edge metrics
+    ('PageRank+', 'MeanProductRank', 'MedianProductRank', 'MaxProductRank') require both to use the same effect-size rescaling (RE or VE); P- and LP-based
     metrics can be combined with either.
 
     :param nodes_diff: Differential node scores.
     :param edges_diff: Differential edge scores.
-    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'MeanEdgeRank', 'MedianEdgeRank', 'nodeRank', 'MeanProductRank' and 'MedianProductRank'.
+    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'MeanEdgeRank', 'MedianEdgeRank', 'MaxEdgeRank', 'nodeRank', 'MeanProductRank', 'MedianProductRank' and 'MaxProductRank'.
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
     :param path: Optional path to save the ranking as a CSV file.
     :param edge_node_stats: Optional precomputed per-node edge statistics (see edge_node_statistics). If not
@@ -70,15 +71,15 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
         ranking_scores = pagerank(edges_diff=edges_diff, edge_metric=edge_metric,
                                 personalization=False, damping=pagerank_damping)
 
-    # Mean / median edge metric over each node's incident edges
-    elif ranking_alg in ('MeanEdgeRank', 'MedianEdgeRank'):
+    # Mean / median / maximum edge metric over each node's incident edges
+    elif ranking_alg in ('MeanEdgeRank', 'MedianEdgeRank', 'MaxEdgeRank'):
         ranking_scores = edge_node_stats[ALG_EDGE_STATISTIC[ranking_alg]].to_dict()
 
     # Direct ranking based on node metric
     elif ranking_alg == 'nodeRank':
         ranking_scores = nodes_diff[node_metric].to_dict()
 
-    # Product of the node-metric rank and the mean / median edge-metric rank
+    # Product of the node-metric rank and the mean / median / maximum edge-metric rank
     else:
         extra = productrank(nodes_diff=nodes_diff, node_metric=node_metric, edge_node_stats=edge_node_stats,
                             statistic=ALG_EDGE_STATISTIC[ranking_alg])
@@ -160,8 +161,8 @@ def pagerank(edges_diff, edge_metric, nodes_diff=None, node_metric=None, persona
     return ranking
 
 
-# MeanProductRank / MedianProductRank: rank nodes by the node metric and by the mean / median of their
-# incident edge metric (statistic 'edge-mean' / 'edge-median'; both descending, ties get the average
+# MeanProductRank / MedianProductRank / MaxProductRank: rank nodes by the node metric and by the mean / median /
+# maximum of their incident edge metric (statistic 'edge-mean' / 'edge-median' / 'edge-max'; both descending, ties get the average
 # rank) and score each node by the product of both ranks (lower = better). Nodes without edges or
 # without a node score are ranked last in that component.
 def productrank(nodes_diff, node_metric, edge_node_stats, statistic='edge-mean'):
