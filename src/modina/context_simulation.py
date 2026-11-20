@@ -38,7 +38,7 @@ _MAX_ABS_CORR = 0.99
 # break positive definiteness (roughly, its squared correlations with nearly independent partners must
 # sum to less than 1), so every hub is checked exactly and redrawn on failure.
 _HUB_MIN_EIGENVALUE = 1e-6
-_HUB_MAX_DRAWS = 200
+_HUB_MAX_DRAWS = 1000
 
 
 # Magnitude written into every off-diagonal cell of the background precision matrix Omega. Its
