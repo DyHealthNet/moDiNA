@@ -274,8 +274,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                        change in the same, randomly chosen context. Every hub is checked for positive
                        definiteness and its partners, magnitudes and signs are redrawn on failure (count in
                        effects['hub_redraws']); high degrees with large magnitudes therefore favour weaker
-                       draws. Ground truth: the hub ('hub') and its partners ('hub partner', one edge each,
-                       like a pair end); the hub edges ('hub').
+                       draws. Ground truth: the hub ('diff. corr. planted hub') and its partners ('diff. corr. planted
+                       hub partner', one edge each, like a pair end); the hub edges ('diff. corr. planted hub').
     :param n_hub_bi: Number of binary planted hubs.
     :param n_hub_cat: Number of categorical planted hubs.
     :param hub_degree_low: Smallest number of edges of a planted hub (>= 1). Default 3.
@@ -287,11 +287,11 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                              hub with the other variables is multiplied by this factor in [0, 1). Under the
                              module background this is the hub's module loading shrinking by the factor (0:
                              the hub leaves its module), so all its module correlations change at once. The
-                             matrix stays positive definite for any factor. Ground truth: the hub ('module
-                             hub'); its edges whose latent correlation changes by at least `corr_low` are
-                             ground-truth edges ('module hub'). Its partners are not ground-truth nodes;
-                             evaluations should leave them out (neither positive nor negative), since each
-                             carries a real changed edge. Default 0.5.
+                             matrix stays positive definite for any factor. Ground truth: its edges whose latent
+                             correlation changes by at least `corr_low` ('diff. corr. hub'), the hub ('diff.
+                             corr. hub') and every other node on such an edge ('diff. corr. hub partner'). A
+                             partner carries a real changed edge but is not its cause, so an evaluation can
+                             score partners separately or leave them out. Default 0.5.
 
     Both hub types are planted after the pairs and the mean-shift node selection, from the next free nodes
     of their type, and draw from their own random stream (seeded from the state of numpy's global
@@ -389,8 +389,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                checked against). Planted hubs add 'hub_nodes' (list), 'hub_partners' (dict hub -> list of
                partners), 'hub_edge_magnitude' (dict keyed by frozenset({hub, partner}) -> realised latent
                correlation difference), 'hub_context' (dict hub -> context of its edges) and 'hub_redraws'
-               (failed draws in total); module hubs add 'module_hub_nodes', 'module_hub_edge_magnitude'
-               (ground-truth edges only) and 'module_hub_context'. Hubs and partners also appear in
+               (failed draws in total); module hubs add 'module_hub_nodes', 'module_hub_partners' (dict hub ->
+               list of partners), 'module_hub_edge_magnitude' (ground-truth edges only) and 'module_hub_context'. Hubs and partners also appear in
                'node_degree' / 'node_sum_magnitude' with their ground-truth edges.
     """
     if n_bi <= 0 and n_cont <= 0 and n_cat <= 0:
@@ -674,6 +674,18 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         incident = [m for edge, m in module_hub_edge_magnitude.items() if hub in edge]
         node_degree[hub] = len(incident)
         node_sum_magnitude[hub] = float(sum(incident))
+    # Partners: the other end of every ground-truth hub edge, unless that end is a module hub itself. Their
+    # node statistics count these edges on top of any planted pair edge they carry.
+    module_hub_partners = {hub: [] for hub in module_hub_nodes}
+    for edge, magnitude in module_hub_edge_magnitude.items():
+        for hub in edge & set(module_hub_nodes):
+            for partner in edge - {hub}:
+                if partner not in module_hub_nodes:
+                    module_hub_partners[hub].append(partner)
+                    node_degree[partner] = node_degree.get(partner, 0) + 1
+                    node_sum_magnitude[partner] = node_sum_magnitude.get(partner, 0.0) + magnitude
+    for hub in module_hub_nodes:
+        module_hub_partners[hub].sort(key=nodes.index)
 
     mean_vector1 = np.zeros(n_vars)
     mean_vector2 = np.zeros(n_vars)
@@ -751,6 +763,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     # node_sum_magnitude, so it correctly falls back to (0, 0.0) via save_gt's own .get() default.
     gt_nodes = set(shift_nodes) | set(hub_nodes) | set(module_hub_nodes)
     gt_nodes.update(p for partners in hub_partners.values() for p in partners)
+    gt_nodes.update(p for partners in module_hub_partners.values() for p in partners)
     for pair in corr_nodes + shift_corr_nodes:
         gt_nodes.update(pair)
     node_stats = {node: (node_degree.get(node, 0), node_sum_magnitude.get(node, 0.0)) for node in gt_nodes}
@@ -758,7 +771,8 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                'node_shift_magnitude': node_shift_magnitude,
                'hub_nodes': hub_nodes, 'hub_partners': hub_partners, 'hub_edge_magnitude': hub_edge_magnitude,
                'hub_context': hub_context, 'hub_redraws': hub_redraws,
-               'module_hub_nodes': module_hub_nodes, 'module_hub_edge_magnitude': module_hub_edge_magnitude,
+               'module_hub_nodes': module_hub_nodes, 'module_hub_partners': module_hub_partners,
+               'module_hub_edge_magnitude': module_hub_edge_magnitude,
                'module_hub_context': module_hub_context,
                'corr_matrix1': corr1, 'corr_matrix2': corr2,
                'mean_vector1': mean_vector1, 'mean_vector2': mean_vector2,
@@ -772,7 +786,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         context1.to_csv(os.path.join(path, f'{name1}.csv'))
         context2.to_csv(os.path.join(path, f'{name2}.csv'))
         meta.to_csv(os.path.join(path, 'meta.csv'), index=False)
-        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth_nodes.txt'), mode='node', node_stats=node_stats, node_shift_magnitude=node_shift_magnitude, hub_partners=hub_partners, module_hub_nodes=module_hub_nodes)
+        save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth_nodes.txt'), mode='node', node_stats=node_stats, node_shift_magnitude=node_shift_magnitude, hub_partners=hub_partners, module_hub_nodes=module_hub_nodes, module_hub_partners=module_hub_partners)
         save_gt((shift_nodes, corr_nodes, shift_corr_nodes), os.path.join(path, 'ground_truth_edges.txt'), mode='edge', edge_magnitude=edge_magnitude, hub_edge_magnitude=hub_edge_magnitude, module_hub_edge_magnitude=module_hub_edge_magnitude)
 
     return context1, context2, meta, (shift_nodes, corr_nodes, shift_corr_nodes), effects
@@ -932,7 +946,8 @@ def _simu_gaussian(n: int, m: int, corr_matrix: np.ndarray, mean_vector: Optiona
 
 # Save ground truth nodes to file
 def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=None, node_shift_magnitude=None,
-            hub_partners=None, hub_edge_magnitude=None, module_hub_nodes=None, module_hub_edge_magnitude=None):
+            hub_partners=None, hub_edge_magnitude=None, module_hub_nodes=None, module_hub_edge_magnitude=None,
+            module_hub_partners=None):
     """
     Write ground truth nodes or edges to a two- (or, with the optional data below, wider-) column file.
 
@@ -956,13 +971,21 @@ def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=Non
                                  column existed.
 
     :param hub_partners: Optional, mode='node' only. Planted hubs and their partners (`effects['hub_partners']`,
-                         hub -> partners): each hub is written as 'hub', each partner as 'hub partner'.
+                         hub -> partners): each hub is written as 'diff. corr. planted hub', each partner as
+                         'diff. corr. planted hub partner'.
     :param hub_edge_magnitude: Optional, mode='edge' only. Planted hub edges (`effects['hub_edge_magnitude']`),
-                               written as 'hub' with their realised latent correlation difference in `corr`.
+                               written as 'diff. corr. planted hub' with their realised latent correlation
+                               difference in `corr`.
     :param module_hub_nodes: Optional, mode='node' only. Module hubs (`effects['module_hub_nodes']`), written
-                             as 'module hub'. Their partners are not written.
+                             as 'diff. corr. hub'.
     :param module_hub_edge_magnitude: Optional, mode='edge' only. Ground-truth module-hub edges
-                                      (`effects['module_hub_edge_magnitude']`), written as 'module hub'.
+                                      (`effects['module_hub_edge_magnitude']`), written as 'diff. corr. hub'.
+    :param module_hub_partners: Optional, mode='node' only. Module-hub partners (`effects['module_hub_partners']`,
+                                hub -> partners), each written once as 'diff. corr. hub partner'.
+
+    Descriptions: 'mean shift', 'diff. corr. pair' (a single planted pair), 'mean shift + diff. corr. pair',
+    'diff. corr. hub' and 'diff. corr. hub partner' (module hubs), 'diff. corr. planted hub' and
+    'diff. corr. planted hub partner' (planted hubs). A node carrying several effects has one row per effect.
 
     The magnitude columns are named `shift` and `corr` after the quantity they hold, matching the
     `shift_low`/`shift_high` and `corr_low`/`corr_high` parameters the values are drawn from.
@@ -992,17 +1015,23 @@ def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=Non
             for node in shift:
                 _write_node(node, 'mean shift')
             for pair in corr:
-                _write_node(pair[0], 'diff. corr.')
-                _write_node(pair[1], 'diff. corr.')
+                _write_node(pair[0], 'diff. corr. pair')
+                _write_node(pair[1], 'diff. corr. pair')
             for pair in shift_corr:
-                _write_node(pair[0], 'mean shift + diff. corr.')
-                _write_node(pair[1], 'mean shift + diff. corr.')
+                _write_node(pair[0], 'mean shift + diff. corr. pair')
+                _write_node(pair[1], 'mean shift + diff. corr. pair')
             for hub, partners in (hub_partners or {}).items():
-                _write_node(hub, 'hub')
+                _write_node(hub, 'diff. corr. planted hub')
                 for partner in partners:
-                    _write_node(partner, 'hub partner')
+                    _write_node(partner, 'diff. corr. planted hub partner')
             for node in module_hub_nodes or []:
-                _write_node(node, 'module hub')
+                _write_node(node, 'diff. corr. hub')
+            written = set()
+            for partners in (module_hub_partners or {}).values():
+                for partner in partners:
+                    if partner not in written:
+                        written.add(partner)
+                        _write_node(partner, 'diff. corr. hub partner')
 
     if mode == 'edge':
         with open(path, 'w') as f:
@@ -1019,10 +1048,11 @@ def save_gt(groundtruths, path, mode='node', edge_magnitude=None, node_stats=Non
                 f.write(line + '\n')
 
             for pair in corr:
-                _write_edge(pair, 'diff. corr.')
+                _write_edge(pair, 'diff. corr. pair')
             for pair in shift_corr:
-                _write_edge(pair, 'mean shift + diff. corr.')
-            for description, magnitudes in (('hub', hub_edge_magnitude), ('module hub', module_hub_edge_magnitude)):
+                _write_edge(pair, 'mean shift + diff. corr. pair')
+            for description, magnitudes in (('diff. corr. planted hub', hub_edge_magnitude),
+                                            ('diff. corr. hub', module_hub_edge_magnitude)):
                 for pair, magnitude in (magnitudes or {}).items():
                     line = f'{"_".join(sorted(pair))}, {description}'
                     if edge_magnitude is not None:

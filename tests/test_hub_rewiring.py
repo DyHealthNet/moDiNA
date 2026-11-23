@@ -58,10 +58,11 @@ def test_planted_hub_edges_change_in_one_context():
 def test_planted_hub_ground_truth_files(tmp_path):
     _simulate(path=str(tmp_path), n_hub_bi=1, hub_degree_low=4, hub_degree_high=4, n_shift_cat=1)
     nodes = pd.read_csv(tmp_path / 'ground_truth_nodes.txt', sep=', ', engine='python')
-    assert nodes['description'].value_counts().to_dict() == {'hub partner': 4, 'hub': 1, 'mean shift': 1}
+    assert nodes['description'].value_counts().to_dict() == {'diff. corr. planted hub partner': 4,
+                                                             'diff. corr. planted hub': 1, 'mean shift': 1}
     assert nodes.set_index('node').loc['bi1', 'n_edges_tweaked'] == 4
     edges = pd.read_csv(tmp_path / 'ground_truth_edges.txt', sep=', ', engine='python')
-    assert (edges['description'] == 'hub').sum() == 4
+    assert (edges['description'] == 'diff. corr. planted hub').sum() == 4
     assert edges['corr'].between(0.1, 0.4).all()
 
 
@@ -112,17 +113,31 @@ def test_module_hub_ground_truth(tmp_path):
         assert effects['node_degree'][hub] == len(expected)
         assert effects['node_sum_magnitude'][hub] == pytest.approx(sum(hub_edges[e] for e in expected))
 
+    # partners: the other end of every hub edge, except other hubs; their stats count those edges
+    hubs = set(effects['module_hub_nodes'])
+    partners = effects['module_hub_partners']
+    for hub in hubs:
+        assert set(partners[hub]) == {n for e in hub_edges if hub in e for n in e} - hubs
+    pair_nodes = {n for pair in corr_nodes for n in pair}
+    for p in {p for ps in partners.values() for p in ps}:
+        n_hub_edges = sum(1 for e in hub_edges if p in e)
+        assert effects['node_degree'][p] == n_hub_edges + (p in pair_nodes)
+
+    all_partners = {p for ps in partners.values() for p in ps}
     modina.save_gt((shift_nodes, corr_nodes, shift_corr_nodes), tmp_path / 'nodes.txt', mode='node',
-                   node_stats={h: (effects['node_degree'][h], effects['node_sum_magnitude'][h])
-                               for h in effects['module_hub_nodes']},
-                   module_hub_nodes=effects['module_hub_nodes'])
+                   node_stats={n: (effects['node_degree'][n], effects['node_sum_magnitude'][n])
+                               for n in hubs | all_partners},
+                   module_hub_nodes=effects['module_hub_nodes'], module_hub_partners=partners)
     modina.save_gt((shift_nodes, corr_nodes, shift_corr_nodes), tmp_path / 'edges.txt', mode='edge',
                    edge_magnitude=effects['edge_magnitude'], module_hub_edge_magnitude=hub_edges)
     gt_nodes = pd.read_csv(tmp_path / 'nodes.txt', sep=', ', engine='python')
-    assert list(gt_nodes.loc[gt_nodes['description'] == 'module hub', 'node']) == effects['module_hub_nodes']
-    assert len(gt_nodes) == 2 + 2                           # one planted pair + two hubs, no partners
+    assert list(gt_nodes.loc[gt_nodes['description'] == 'diff. corr. hub', 'node']) == effects['module_hub_nodes']
+    written = gt_nodes.loc[gt_nodes['description'] == 'diff. corr. hub partner', 'node']
+    assert written.is_unique and set(written) == all_partners
+    assert (gt_nodes['description'] == 'diff. corr. pair').sum() == 2
     gt_edges = pd.read_csv(tmp_path / 'edges.txt', sep=', ', engine='python')
-    assert (gt_edges['description'] == 'module hub').sum() == len(hub_edges)
+    assert (gt_edges['description'] == 'diff. corr. hub').sum() == len(hub_edges)
+    assert (gt_edges['description'] == 'diff. corr. pair').sum() == 1
 
 
 # ------------------------------------------------------------------------------------------- shared behaviour
