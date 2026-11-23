@@ -1,5 +1,5 @@
 """Edge metrics, node metrics (WDC / PRC / STC) and the edge-statistic ranking algorithms
-(Mean/MedianEdgeRank, Mean/MedianProductRank)."""
+(Mean/Median/MaxEdgeRank, Mean/Median/MaxProductRank, Mean/Median/MaxMinRank)."""
 
 import numpy as np
 import pandas as pd
@@ -310,7 +310,30 @@ def test_edge_statistic_rankings(alg, expected):
         compute_ranking(pd.DataFrame({'WDC-P': [1.0]}, index=['a']), None, alg)
 
 
-@pytest.mark.parametrize('alg, statistic', [('MeanProductRank', 'edge-mean'), ('MedianProductRank', 'edge-median')])
+def test_max_edge_rank_scores_strongest_incident_edge():
+    ranking = compute_ranking(None, _STAT_EDGES, 'MaxEdgeRank').set_index('node')
+    assert ranking['score'].to_dict() == pytest.approx({'a': 0.9, 'b': 0.9, 'c': 0.4, 'd': 0.2})
+    # a and b tie on their shared strongest edge
+    assert ranking['rank'].to_dict() == {'a': 1, 'b': 1, 'c': 3, 'd': 4}
+    assert ranking['edge-max'].to_dict() == ranking['score'].to_dict()
+    with pytest.raises(ValueError, match='edges_diff'):
+        compute_ranking(pd.DataFrame({'WDC-P': [1.0]}, index=['a']), None, 'MaxEdgeRank')
+
+
+def test_max_edge_rank_is_not_diluted_by_unchanged_edges():
+    # Hub 'h' has one strong change among many null edges; 'x' and 'y' share a moderate change only.
+    leaves = [f'l{i}' for i in range(20)]
+    edges = pd.DataFrame({'label1': ['h'] * 21 + ['x'], 'label2': ['s'] + leaves + ['y'], 'test_type': 'pearson',
+                          'diff-Z': [5.0] + [0.1] * 20 + [1.0]})
+    mean = compute_ranking(None, edges, 'MeanEdgeRank').set_index('node')['rank']
+    top = compute_ranking(None, edges, 'MaxEdgeRank').set_index('node')['rank']
+    assert mean['h'] > mean['x']                       # the mean buries the hub's change
+    assert top['h'] == top['s'] == 1 and top['x'] == 3  # the maximum does not
+
+
+@pytest.mark.parametrize('alg, statistic', [('MeanProductRank', 'edge-mean'), ('MedianProductRank', 'edge-median'),
+                                            ('MaxProductRank', 'edge-max'), ('MeanMinRank', 'edge-mean'),
+                                            ('MedianMinRank', 'edge-median'), ('MaxMinRank', 'edge-max')])
 def test_productrank_ranking_is_ascending(alg, statistic):
     edges = _edges('diff-LP', s1=_scores([0.01, 1e-6, 1e-20, 0.3], [0.3, 0.6, 0.5, 0.1]),
                    s2=_scores([0.01, 0.2, 1e-3, 0.04], [-0.3, 0.1, 0.5, 0.2]))
@@ -330,6 +353,38 @@ def test_median_product_rank_uses_median_edge_rank():
     # edge ranks follow the MeanEdgeRank / MedianEdgeRank scores (descending, ties averaged)
     assert mean.to_dict() == {'b': 1.0, 'a': 2.0, 'c': 3.0, 'd': 4.0}
     assert median.to_dict() == {'b': 1.0, 'c': 2.0, 'a': 3.5, 'd': 3.5}
+    top = compute_ranking(nodes, _STAT_EDGES, 'MaxProductRank').set_index('node')
+    # edge ranks follow the MaxEdgeRank scores (a = b = 0.9, c = 0.4, d = 0.2); node ranks d=1, c=2, b=3, a=4
+    assert top['rank_edge'].to_dict() == {'a': 1.5, 'b': 1.5, 'c': 3.0, 'd': 4.0}
+    assert top['score'].to_dict() == {'a': 6.0, 'b': 4.5, 'c': 6.0, 'd': 4.0}
+
+
+@pytest.mark.parametrize('alg, rank_edge, score', [
+    # node ranks (descending WDC-P): d=1, c=2, b=3, a=4; score = min + max / (n + 1) with n = 4
+    ('MeanMinRank', {'a': 2, 'b': 1, 'c': 3, 'd': 4}, {'a': 2.8, 'b': 1.6, 'c': 2.6, 'd': 1.8}),
+    ('MedianMinRank', {'a': 3, 'b': 1, 'c': 2, 'd': 3}, {'a': 3.8, 'b': 1.6, 'c': 2.4, 'd': 1.6}),
+    ('MaxMinRank', {'a': 1, 'b': 1, 'c': 3, 'd': 4}, {'a': 1.8, 'b': 1.6, 'c': 2.6, 'd': 1.8}),
+])
+def test_min_rank_takes_the_better_of_node_and_edge_rank(alg, rank_edge, score):
+    nodes = pd.DataFrame({'WDC-P': [0.1, 0.2, 0.3, 0.4]}, index=list('abcd'))
+    ranking = compute_ranking(nodes, _STAT_EDGES, alg).set_index('node')
+    assert ranking['rank_node'].to_dict() == {'a': 4, 'b': 3, 'c': 2, 'd': 1}
+    assert ranking['rank_edge'].to_dict() == rank_edge      # ties share the best rank of the tie
+    assert ranking['score'].to_dict() == pytest.approx(score)
+    assert ranking['rank'].to_dict() == ranking['score'].rank(method='min').astype(int).to_dict()
+
+
+def test_min_rank_finds_nodes_that_stand_out_in_either_score():
+    # 's' only has a high node metric (a mean shift), 'e' and 'f' only share one strong edge (a single changed pair)
+    names = ['s', 'e', 'f', 'n1', 'n2', 'n3']
+    pairs = [(a, b) for i, a in enumerate(names) for b in names[i + 1:]]
+    edges = pd.DataFrame({'label1': [a for a, _ in pairs], 'label2': [b for _, b in pairs], 'test_type': 'pearson',
+                          'diff-Z': [5.0 if {a, b} == {'e', 'f'} else 0.5 for a, b in pairs]})
+    nodes = pd.DataFrame({'STC-P': [9.0, 0.5, 0.4, 3.0, 2.0, 1.0]}, index=names)
+    top = compute_ranking(nodes, edges, 'MaxMinRank').set_index('node')['rank']
+    assert set(top[top <= 3].index) == {'s', 'e', 'f'}
+    product = compute_ranking(nodes, edges, 'MaxProductRank').set_index('node')['rank']
+    assert product['f'] > 2                                   # the product needs both: 'f' is weak in the node metric
 
 
 @pytest.mark.parametrize('metric, rescaling', [
@@ -349,7 +404,8 @@ def test_effect_rescaling(metric, rescaling):
 def test_rescaling_consistency_for_combined_algorithms(node_metric, edge_metric, allowed):
     edges = _edges(edge_metric)
     nodes = pd.DataFrame({node_metric: [0.9, 0.1, 0.5]}, index=list('abc'))
-    for alg in ('PageRank+', 'MeanProductRank', 'MedianProductRank'):
+    for alg in ('PageRank+', 'MeanProductRank', 'MedianProductRank', 'MaxProductRank', 'MeanMinRank', 'MedianMinRank',
+                'MaxMinRank'):
         if allowed:
             compute_ranking(nodes, edges, alg)
         else:

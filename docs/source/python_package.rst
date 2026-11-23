@@ -200,7 +200,7 @@ Parameters:
 - ``meta_file``: pandas DataFrame specifying the variable metadata. Must contain the columns ``label`` and ``type`` describing each variable and its data type.
 - ``edge_metric``: Edge-level metric used to compute the differential network. Options are ``'diff-P'``, ``'diff-LP'``, ``'diff-RE'``, ``'diff-VE'``, ``'diff-LPxRE'``, ``'diff-LPxVE'``, ``'sum-LP-VE'``, ``'sum-LP-RE'`` and ``'diff-Z'`` (see :ref:`diffnet`).
 - ``node_metric``: Node-level metric used to compute the differential network. Options are ``'<family>-<score>'`` with family ``WDC``, ``PRC`` or ``STC`` and score ``P``, ``LP``, ``RE``, ``VE``, ``LPxRE`` or ``LPxVE`` (e.g. ``'STC-P'``, ``'PRC-LPxRE'``) (see :ref:`diffnet`).
-- ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'MeanEdgeRank'``, ``'MedianEdgeRank'``, ``'nodeRank'``, ``'MeanProductRank'`` and ``'MedianProductRank'``. Defaults to ``'PageRank+'``.
+- ``ranking_alg``: Ranking algorithm applied to the differential network. Options include ``'PageRank+'``, ``'PageRank'``, ``'MeanEdgeRank'``, ``'MedianEdgeRank'``, ``'MaxEdgeRank'``, ``'nodeRank'``, ``'MeanProductRank'``, ``'MedianProductRank'``, ``'MaxProductRank'``, ``'MeanMinRank'``, ``'MedianMinRank'`` and ``'MaxMinRank'``. Defaults to ``'PageRank+'``.
 - ``filter_method``: Filtering method. Options include ``'degree'``, ``'density'``. Required when ``filter_target`` is not ``None``.
 - ``filter_param``: Parameter controlling the filtering strength.
 - ``filter_target``: Which network to filter. ``None`` (default) performs no filtering. ``'context-specific'`` filters the two context networks *before* constructing the differential network (using ``filter_metric`` and ``filter_rule``); ``'differential'`` filters the differential network *after* its construction, directly on the computed ``edge_metric`` (in this case ``filter_metric`` and ``filter_rule`` are ignored). When ``filter_target`` is not ``None``, ``filter_method`` must be provided.
@@ -630,6 +630,8 @@ The table below summarizes the implemented ranking methods and their required in
 +-----------------------+---------+---------+------------------+
 | ``MedianEdgeRank``    | ✓       |         | node ranking     |
 +-----------------------+---------+---------+------------------+
+| ``MaxEdgeRank``       | ✓       |         | node ranking     |
++-----------------------+---------+---------+------------------+
 | ``PageRank``          | ✓       |         | node ranking     |
 +-----------------------+---------+---------+------------------+
 | ``PageRank+``         | ✓       | ✓       | node ranking     |
@@ -640,17 +642,35 @@ The table below summarizes the implemented ranking methods and their required in
 +-----------------------+---------+---------+------------------+
 | ``MedianProductRank`` | ✓       | ✓       | node ranking     |
 +-----------------------+---------+---------+------------------+
+| ``MaxProductRank``    | ✓       | ✓       | node ranking     |
++-----------------------+---------+---------+------------------+
+| ``MeanMinRank``       | ✓       | ✓       | node ranking     |
++-----------------------+---------+---------+------------------+
+| ``MedianMinRank``     | ✓       | ✓       | node ranking     |
++-----------------------+---------+---------+------------------+
+| ``MaxMinRank``        | ✓       | ✓       | node ranking     |
++-----------------------+---------+---------+------------------+
 
-``MeanEdgeRank`` and ``MedianEdgeRank`` score each node by the mean (``edge-mean``) or median
-(``edge-median``) of the edge metric over its incident edges.
+``MeanEdgeRank``, ``MedianEdgeRank`` and ``MaxEdgeRank`` score each node by the mean (``edge-mean``),
+median (``edge-median``) or maximum (``edge-max``) of the edge metric over its incident edges. The maximum
+scores a node by its single strongest change; unlike the mean, it is not diluted when only a few of a
+node's many edges change.
 
-``MeanProductRank`` and ``MedianProductRank`` rank the nodes by their node metric and by the mean
-(``edge-mean``) or median (``edge-median``) of their incident edge metric, and score each node by the
+``MeanProductRank``, ``MedianProductRank`` and ``MaxProductRank`` rank the nodes by their node metric and by
+the mean (``edge-mean``), median (``edge-median``) or maximum (``edge-max``) of their incident edge metric,
+and score each node by the
 product of both ranks. Their score is therefore better when lower; the ``rank`` column is 1 for the top
 node for every algorithm. The two component ranks are returned as ``rank_node`` and ``rank_edge``.
+A node needs to stand out in both.
 
-Algorithms that combine node and edge metrics (``PageRank+``, ``MeanProductRank`` and
-``MedianProductRank``) require both
+``MeanMinRank``, ``MedianMinRank`` and ``MaxMinRank`` use the same two ranks but score each node by the better
+(smaller) of them, so a node is ranked high when it stands out in either: by its node metric (for instance a
+mean shift) or by its edges (an association change). Ties between equal minima are broken by the other rank.
+``MaxMinRank`` combines this with the undiluted maximum edge statistic and finds both kinds of effect without
+filtering the differential network.
+
+Algorithms that combine node and edge metrics (``PageRank+`` and the ProductRank and MinRank algorithms)
+require both
 metrics to use the same effect-size rescaling: metrics based on ``RE`` (``*-RE``, ``*-LPxRE``,
 ``sum-LP-RE``) cannot be combined with metrics based on ``VE`` (``*-VE``,
 ``*-LPxVE``, ``sum-LP-VE``). P- and LP-based metrics can be combined with either.
@@ -659,7 +679,7 @@ Parameters:
 
 - ``nodes_diff``: pandas DataFrame containing differential node scores.
 - ``edges_diff``: pandas DataFrame containing differential edge scores.
-- ``ranking_alg``: Ranking algorithm to compute. Options include ``'PageRank+'``, ``'PageRank'``, ``'MeanEdgeRank'``, ``'MedianEdgeRank'``, ``'nodeRank'``, ``'MeanProductRank'`` and ``'MedianProductRank'``.
+- ``ranking_alg``: Ranking algorithm to compute. Options include ``'PageRank+'``, ``'PageRank'``, ``'MeanEdgeRank'``, ``'MedianEdgeRank'``, ``'MaxEdgeRank'``, ``'nodeRank'``, ``'MeanProductRank'``, ``'MedianProductRank'``, ``'MaxProductRank'``, ``'MeanMinRank'``, ``'MedianMinRank'`` and ``'MaxMinRank'``.
 - ``meta_file``: Optional pandas DataFrame specifying node metadata (columns ``label`` and ``type``), used to generate type-specific rankings.
 - ``path``: Optional file path to save the resulting ranking as a CSV file.
 - ``edge_node_stats``: Optional precomputed per-node edge statistics (as returned by ``compute_diff_edges`` / ``compute_diff_network``). If omitted but an edge metric was employed, the statistics are computed on the fly.
