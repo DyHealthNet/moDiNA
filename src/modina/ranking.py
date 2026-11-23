@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Tuple, Optional
 
-from modina.metrics import (EDGE_METRICS, NODE_METRICS, ALG_REQUIRES, ALG_EDGE_STATISTIC, ASCENDING_ALGORITHMS,
+from modina.metrics import (EDGE_METRICS, NODE_METRICS, ALG_REQUIRES, ALG_EDGE_STATISTIC, ASCENDING_ALGORITHMS, MIN_RANK_ALGORITHMS,
                             check_ranking_alg, check_rescaling_consistency)
 
 
@@ -22,14 +22,17 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
     over its incident edges ('edge-mean' / 'edge-median' / 'edge-max'). The maximum scores a node by its single
     strongest change, which is not diluted by the many unchanged edges of a dense differential network.
     'MeanProductRank' / 'MedianProductRank' / 'MaxProductRank' rank nodes by the product of their rank by the node
-    metric and their rank by that mean / median / maximum incident edge metric; their score is therefore better
-    when lower, while 'rank' is 1 for the top node for every algorithm. Algorithms combining node and edge metrics
-    ('PageRank+', 'MeanProductRank', 'MedianProductRank', 'MaxProductRank') require both to use the same effect-size rescaling (RE or VE); P- and LP-based
-    metrics can be combined with either.
+    metric and their rank by that mean / median / maximum incident edge metric, so a node needs to stand out in
+    both. 'MeanMinRank' / 'MedianMinRank' / 'MaxMinRank' rank nodes by the better (smaller) of the same two ranks, so
+    a node stands out when it does so in either: by its node metric (e.g. a mean shift) or by its edges (an
+    association change). The scores of both families are better when lower, while 'rank' is 1 for the top node for
+    every algorithm. Algorithms combining node and edge metrics ('PageRank+' and the ProductRank and MinRank
+    algorithms) require both to use the same effect-size rescaling (RE or VE); P- and LP-based metrics can be
+    combined with either.
 
     :param nodes_diff: Differential node scores.
     :param edges_diff: Differential edge scores.
-    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'MeanEdgeRank', 'MedianEdgeRank', 'MaxEdgeRank', 'nodeRank', 'MeanProductRank', 'MedianProductRank' and 'MaxProductRank'.
+    :param ranking_alg: Ranking algorithm to compute. Options are 'PageRank+', 'PageRank', 'MeanEdgeRank', 'MedianEdgeRank', 'MaxEdgeRank', 'nodeRank', 'MeanProductRank', 'MedianProductRank', 'MaxProductRank', 'MeanMinRank', 'MedianMinRank' and 'MaxMinRank'.
     :param meta_file: Metadata file containing a 'label' and 'type' column to specify the data type of each variable.
     :param path: Optional path to save the ranking as a CSV file.
     :param edge_node_stats: Optional precomputed per-node edge statistics (see edge_node_statistics). If not
@@ -79,10 +82,11 @@ def compute_ranking(nodes_diff: Optional[pd.DataFrame | pd.Series], edges_diff: 
     elif ranking_alg == 'nodeRank':
         ranking_scores = nodes_diff[node_metric].to_dict()
 
-    # Product of the node-metric rank and the mean / median / maximum edge-metric rank
+    # Product or minimum of the node-metric rank and the mean / median / maximum edge-metric rank
     else:
-        extra = productrank(nodes_diff=nodes_diff, node_metric=node_metric, edge_node_stats=edge_node_stats,
-                            statistic=ALG_EDGE_STATISTIC[ranking_alg])
+        combine = minrank if ranking_alg in MIN_RANK_ALGORITHMS else productrank
+        extra = combine(nodes_diff=nodes_diff, node_metric=node_metric, edge_node_stats=edge_node_stats,
+                        statistic=ALG_EDGE_STATISTIC[ranking_alg])
         ranking_scores = extra['score'].to_dict()
 
     # Construct ranking dataframe
@@ -170,3 +174,17 @@ def productrank(nodes_diff, node_metric, edge_node_stats, statistic='edge-mean')
     rank_node = nodes_diff[node_metric].reindex(nodes).rank(method='average', ascending=False, na_option='bottom')
     rank_edge = edge_node_stats[statistic].reindex(nodes).rank(method='average', ascending=False, na_option='bottom')
     return pd.DataFrame({'score': rank_node * rank_edge, 'rank_node': rank_node, 'rank_edge': rank_edge})
+
+
+# MeanMinRank / MedianMinRank / MaxMinRank: rank nodes by the node metric and by the mean / median / maximum of their
+# incident edge metric (both descending; ties share the best rank of the tie, so ranks are whole numbers) and score
+# each node by the better (smaller) of both ranks: a node is ranked high when it stands out in either. Ties are
+# broken by the other rank, score = min + max / (n + 1), whose fraction stays below 1 and so never overtakes a
+# better minimum. Nodes without edges or without a node score are ranked last in that component.
+def minrank(nodes_diff, node_metric, edge_node_stats, statistic='edge-max'):
+    nodes = nodes_diff.index.union(edge_node_stats.index)
+    rank_node = nodes_diff[node_metric].reindex(nodes).rank(method='min', ascending=False, na_option='bottom')
+    rank_edge = edge_node_stats[statistic].reindex(nodes).rank(method='min', ascending=False, na_option='bottom')
+    best = pd.concat([rank_node, rank_edge], axis=1).min(axis=1)
+    other = pd.concat([rank_node, rank_edge], axis=1).max(axis=1)
+    return pd.DataFrame({'score': best + other / (len(nodes) + 1), 'rank_node': rank_node, 'rank_edge': rank_edge})

@@ -34,7 +34,8 @@ NODE_FAMILIES = ('WDC', 'PRC', 'STC')
 NODE_METRICS = tuple(f'{f}-{s}' for f in NODE_FAMILIES for s in SCORE_TYPES)
 
 RANKING_ALGORITHMS = ('PageRank+', 'PageRank', 'MeanEdgeRank', 'MedianEdgeRank', 'MaxEdgeRank', 'nodeRank',
-                      'MeanProductRank', 'MedianProductRank', 'MaxProductRank')
+                      'MeanProductRank', 'MedianProductRank', 'MaxProductRank',
+                      'MeanMinRank', 'MedianMinRank', 'MaxMinRank')
 
 # (needs edges_diff, needs nodes_diff) per ranking algorithm
 ALG_REQUIRES = {
@@ -47,6 +48,9 @@ ALG_REQUIRES = {
     'MeanProductRank': (True, True),
     'MedianProductRank': (True, True),
     'MaxProductRank': (True, True),
+    'MeanMinRank': (True, True),
+    'MedianMinRank': (True, True),
+    'MaxMinRank': (True, True),
 }
 
 # Per-node edge statistic (column of edge_node_statistics) used by the edge-statistic based algorithms
@@ -57,10 +61,17 @@ ALG_EDGE_STATISTIC = {
     'MeanProductRank': 'edge-mean',
     'MedianProductRank': 'edge-median',
     'MaxProductRank': 'edge-max',
+    'MeanMinRank': 'edge-mean',
+    'MedianMinRank': 'edge-median',
+    'MaxMinRank': 'edge-max',
 }
 
 # Ranking algorithms whose score is better when lower (sorted and ranked ascending).
-ASCENDING_ALGORITHMS = frozenset({'MeanProductRank', 'MedianProductRank', 'MaxProductRank'})
+ASCENDING_ALGORITHMS = frozenset({'MeanProductRank', 'MedianProductRank', 'MaxProductRank',
+                                  'MeanMinRank', 'MedianMinRank', 'MaxMinRank'})
+
+# Algorithms that combine the node-metric rank and the edge-statistic rank by their minimum instead of their product.
+MIN_RANK_ALGORITHMS = frozenset({'MeanMinRank', 'MedianMinRank', 'MaxMinRank'})
 
 
 def metric_score(metric: str) -> str:
