@@ -193,3 +193,53 @@ def test_infeasible_background_raises_naming_corr_high(monkeypatch):
             n_cont=5, n_bi=0, n_cat=0, n_samples_1=20, n_samples_2=20,
             n_corr_cont_cont=1,
             corr_low=0.3, corr_high=0.3, shift_low=0.1, shift_high=0.1)
+
+
+
+def _simulate_with_missing(missing_low=0.0, missing_high=0.0, missing_differential=0.0):
+    random.seed(7)
+    np.random.seed(7)
+    return modina.simulate_copula(
+        n_cont=20, n_bi=20, n_cat=20, n_samples_1=400, n_samples_2=300,
+        n_shift_cont=2, n_corr_bi_cont=2,
+        corr_low=0.1, corr_high=0.4, shift_low=0.2, shift_high=0.8, background_seed=1,
+        missing_low=missing_low, missing_high=missing_high, missing_differential=missing_differential)
+
+
+def test_missingness_only_removes_values():
+    c1, c2, meta, gt, effects = _simulate_with_missing()
+    m1, m2, meta_m, gt_m, effects_m = _simulate_with_missing(0.1, 0.3)
+    assert effects['missing_rate_1'] == {} and not c1.isna().any().any()
+    # same ground truth and same complete data: masking draws from its own stream, after the sampling
+    assert gt_m == gt and meta_m.equals(meta)
+    for full, masked in ((c1, m1), (c2, m2)):
+        observed = masked.notna()
+        assert (masked[observed] == full[observed]).sum().sum() == observed.sum().sum()
+    # shared rates in [missing_low, missing_high], realised close to the draw
+    rates = pd.Series(effects_m['missing_rate_1'])
+    assert effects_m['missing_rate_2'] == effects_m['missing_rate_1'] and effects_m['missing_differential_nodes'] == []
+    assert set(rates.index) == set(m1.columns) and rates.between(0.1, 0.3).all()
+    for masked in (m1, m2):
+        assert (masked.isna().mean() - rates[masked.columns]).abs().max() < 0.1
+
+
+def test_missingness_differential_levels_are_paired():
+    levels = {f: _simulate_with_missing(0.1, 0.3, f) for f in (0.0, 0.2, 1.0)}
+    shared, mixed, per_context = (levels[f] for f in (0.0, 0.2, 1.0))
+    # context 1 identical across the levels
+    assert shared[0].equals(mixed[0]) and shared[0].equals(per_context[0])
+    nodes = {f: set(level[4]['missing_differential_nodes']) for f, level in levels.items()}
+    assert len(nodes[0.2]) == round(0.2 * 60) and nodes[0.2] <= nodes[1.0] and len(nodes[1.0]) == 60
+    # context 2: variables with a shared rate are masked identically in every level
+    same = [c for c in shared[1].columns if c not in nodes[0.2]]
+    assert shared[1][same].equals(mixed[1][same])
+    r1, r2 = pd.Series(per_context[4]['missing_rate_1']), pd.Series(per_context[4]['missing_rate_2'])
+    assert r2.between(0.1, 0.3).all() and (r1 != r2).all()
+    r2_mixed = pd.Series(mixed[4]['missing_rate_2'])
+    assert (r2_mixed[sorted(nodes[0.2])] == r2[sorted(nodes[0.2])]).all()
+
+
+def test_missingness_rate_validation():
+    for low, high, differential in ((0.3, 0.1, 0.0), (-0.1, 0.2, 0.0), (0.1, 1.0, 0.0), (0.1, 0.3, 1.5)):
+        with pytest.raises(ValueError, match='missing'):
+            _simulate_with_missing(low, high, differential)

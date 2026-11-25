@@ -246,7 +246,7 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                     n_module_hub_cont=0, n_module_hub_bi=0, n_module_hub_cat=0, module_hub_scale=0.5,
                     background_strength=0.2, background_density=2, background_seed=None,
                     background_model='modules', module_size=None, module_fraction=0.1,
-                    module_correlation=0.2):
+                    module_correlation=0.2, missing_low=0.0, missing_high=0.0, missing_differential=0.0):
     """
     Simulate two contexts with binary and continuous nodes using a Gaussian copula.
     
@@ -370,6 +370,23 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     :param module_correlation: Correlation between the module factors, in [0, 1). Sets the weak
                                associations between modules and with them how dense the background is.
                                Default 0.2. Only used with background_model='modules'.
+    :param missing_low: Lower end of the per-variable rate of values missing completely at random (MCAR). Each
+                        variable draws its rate uniformly from [missing_low, missing_high], and each of its values
+                        is then set to NaN independently with this probability, separately in each context. Must
+                        satisfy 0 <= missing_low <= missing_high < 1. Default 0.0.
+    :param missing_high: Upper end of that range. Default 0.0 (with missing_low 0: no missing values).
+    :param missing_differential: Share of the variables, in [0, 1], whose missing rate differs between the
+                                 contexts: round(missing_differential * n_vars) randomly chosen variables draw a
+                                 second rate from the same range for context 2, all others use one rate in both
+                                 contexts. 0 (default): rates shared by both contexts; 1: drawn per context.
+    The missingness is applied after the data are generated and drawn from its own random stream (seeded from
+    the state of numpy's global generator without advancing it), so the complete data, the planted effects and
+    the ground truth equal those of a run without missing values. The draws do not depend on
+    missing_differential beyond the rates themselves: context 1 is identical across its values, the variables
+    with differing rates are nested (those of a smaller share are a subset of those of a larger one), and every
+    value uses the same uniform draw against its rate. The rates are returned in effects['missing_rate_1'] and
+    effects['missing_rate_2'] (dict node -> rate), the variables with differing rates in
+    effects['missing_differential_nodes'].
     :return: A tuple containing the two simulated contexts, a meta file, a list of ground truth nodes
              and a dict of per-edge/per-node injected effect sizes.
              - context1: pd.DataFrame of the first simulated context.
@@ -397,6 +414,11 @@ def simulate_copula(path=None, name1='context1', name2='context2',
         raise ValueError('Either n_bi, n_cont, or n_cat needs to be larger than zero.')
     if not 0.0 <= hub_reuse_prob <= 1.0:
         raise ValueError(f'hub_reuse_prob must lie between 0 and 1, got {hub_reuse_prob}.')
+    if not 0.0 <= missing_low <= missing_high < 1.0:
+        raise ValueError(f'missing_low and missing_high must satisfy 0 <= missing_low <= missing_high < 1, '
+                         f'got {missing_low} and {missing_high}.')
+    if not 0.0 <= missing_differential <= 1.0:
+        raise ValueError(f'missing_differential must lie between 0 and 1, got {missing_differential}.')
     if not 0.0 <= corr_low <= corr_high <= 0.95:
         raise ValueError(f'corr_low and corr_high must satisfy 0 <= corr_low <= corr_high <= 0.95, '
                          f'got corr_low={corr_low}, corr_high={corr_high}.')
@@ -758,6 +780,26 @@ def simulate_copula(path=None, name1='context1', name2='context2',
     context1 = context1.sort_index(axis=1)
     context2 = context2.sort_index(axis=1)
 
+    # MCAR missingness, applied last and from its own stream so the complete data match a run without it
+    # (order of the draws: shared rates, both uniform matrices, then the context-2 rates and the variable order,
+    # so a run with missing_differential 0 is unaffected by the latter and all shares are paired)
+    missing_rate_1, missing_rate_2, missing_differential_nodes = {}, {}, []
+    if missing_high > 0:
+        missing_rng = np.random.default_rng(np.random.get_state()[1])
+        columns = context1.columns
+        rates1 = missing_rng.uniform(missing_low, missing_high, size=len(columns))
+        draw1 = missing_rng.random(context1.shape)
+        draw2 = missing_rng.random(context2.shape)
+        alternative = missing_rng.uniform(missing_low, missing_high, size=len(columns))
+        differential = missing_rng.permutation(len(columns))[:int(round(missing_differential * len(columns)))]
+        rates2 = rates1.copy()
+        rates2[differential] = alternative[differential]
+        context1 = context1.mask(draw1 < rates1)
+        context2 = context2.mask(draw2 < rates2)
+        missing_rate_1 = dict(zip(columns, rates1.tolist()))
+        missing_rate_2 = dict(zip(columns, rates2.tolist()))
+        missing_differential_nodes = sorted(columns[differential])
+
     # Per-node ground-truth stats (n_edges_tweaked, sum_corr), for every node that is
     # a ground-truth node at all -- a mean-shift-only node has no entry in node_degree/
     # node_sum_magnitude, so it correctly falls back to (0, 0.0) via save_gt's own .get() default.
@@ -779,7 +821,9 @@ def simulate_copula(path=None, name1='context1', name2='context2',
                'node_order': list(nodes), 'marginals': marginals,
                'corr_base': sigma_base,
                'background_edges': [frozenset((nodes[a], nodes[b])) for a, b in background_pairs],
-               'background_lambda_min': background_lambda_min}
+               'background_lambda_min': background_lambda_min,
+               'missing_rate_1': missing_rate_1, 'missing_rate_2': missing_rate_2,
+               'missing_differential_nodes': missing_differential_nodes}
 
     # Save simulated contexts and ground truth nodes
     if path:
